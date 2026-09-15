@@ -1,1 +1,1 @@
-"""Tests for selenium-notion-autofill."""
+"""Tests for jobroom-helper."""

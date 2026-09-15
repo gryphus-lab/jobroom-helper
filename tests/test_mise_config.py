@@ -23,7 +23,7 @@ def test_mise_toml_is_valid_toml(mise_config):
 def test_new_task_has_short_alias(mise_config):
     """Test that the 'new' task exposes the 'n' alias."""
     new_task = mise_config["tasks"]["new"]
-    assert new_task["run"] == "uv run -m selenium_notion_autofill new"
+    assert new_task["run"] == "uv run -m jobroom_helper new"
     assert new_task["alias"] == ["n"]
 
 
@@ -35,7 +35,7 @@ def test_update_task_runs_update_rejections_with_short_alias(mise_config):
     'update' ambiguously referred to both dependency updates and the
     update-rejections script."""
     update_task = mise_config["tasks"]["update"]
-    assert update_task["run"] == "uv run -m selenium_notion_autofill update-rejections"
+    assert update_task["run"] == "uv run -m jobroom_helper update-rejections"
     assert update_task["alias"] == ["u"]
 
 
@@ -72,5 +72,5 @@ def test_add_task_unchanged(mise_config):
 def test_create_task_forwards_cli_arguments_automatically(mise_config):
     """The create task must let mise append the URL and CLI options."""
     create_task = mise_config["tasks"]["create"]
-    assert create_task["run"] == "uv run -m selenium_notion_autofill create"
+    assert create_task["run"] == "uv run -m jobroom_helper create"
     assert "{args}" not in create_task["run"]

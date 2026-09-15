@@ -11,18 +11,18 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as ec
 
-from selenium_notion_autofill.config import (
+from jobroom_helper.config import (
     ENTRY_SELECTOR,
     EXECUTE_SCRIPT_CLICK,
     FIELD_SELECTORS,
     SCROLL_INTO_VIEW_SCRIPT,
     get_website_url,
 )
-from selenium_notion_autofill.utils.session_helper import load_session, save_session
+from jobroom_helper.utils.session_helper import load_session, save_session
 
 
 def get_notion_scalar_value(value):
-    """Extract scalar value from simple Notion value wrappers.
+    """Extract scalar value from simple property value wrappers.
 
     For type 'string', extracts the string value.
     For other types, extracts the value at the key matching the type.
@@ -138,6 +138,7 @@ def fill_text(element, field_name, value):
 
 
 def _resolve_element(wait, field_name, selector, value, row=None):
+    """Resolve the appropriate form element, including special field types."""
     if field_name == "Interview" and row is not None:
         interview_value = str(get_notion_scalar_value(value)).strip().lower()
         if interview_value != "vorstellungsgespräch":
@@ -164,10 +165,12 @@ def _resolve_element(wait, field_name, selector, value, row=None):
 
 
 def _is_typeahead(selector):
+    """Return whether a selector identifies a typeahead input."""
     return "single-typeahead" in selector or "typeahead" in selector.lower()
 
 
 def _should_use_checkbox(field_name, selector):
+    """Return whether a field should use the checkbox interaction strategy."""
     return (
         "checkbox" in selector.lower()
         or field_name == "Type"
@@ -176,6 +179,7 @@ def _should_use_checkbox(field_name, selector):
 
 
 def _fill_with_strategy(driver, wait, field_name, selector, element, value):
+    """Fill an element using the interaction strategy implied by its field."""
     if _is_typeahead(selector):
         fill_typeahead(driver, wait, element, field_name, value)
     elif _should_use_checkbox(field_name, selector):
@@ -211,14 +215,14 @@ def fill_field(driver, wait, field_name, selector, value, row=None):
         traceback.print_exc()
 
 
-def process_records(driver, wait, df, notion):
+def process_records(driver, wait, df, store):
     """Process each record from the dataframe.
 
     Args:
         driver: Selenium WebDriver instance
         wait: WebDriverWait instance
         df: Dataframe with records to process
-        notion: NotionHelper instance
+        store: ApplicationStore instance
     """
 
     # Navigate to "Efforts to find work"
@@ -241,7 +245,7 @@ def process_records(driver, wait, df, notion):
 
         input("\nPress Enter to submit the form after reviewing the filled data...")
 
-        success = notion.update_row(
+        success = store.update_row(
             page_id=row["id"],
             properties={
                 "Tracked": {"checkbox": True},
@@ -250,7 +254,7 @@ def process_records(driver, wait, df, notion):
         if success:
             print("   → Record processed")
         else:
-            print("   → Failed to update Notion record. Please check Notion database.")
+            print("   → Failed to update tracker record. Please check the database.")
 
 
 def _get_month_year_pairs(df):
@@ -371,7 +375,8 @@ def _print_rejection_header(index, total, company, role, absagegrund):
     print(f"{'=' * 60}")
 
 
-def _process_rejected_entry(driver, wait, notion, row, index, total):
+def _process_rejected_entry(driver, wait, store, row, index, total):
+    """Find and update one rejected application represented by a tracker row."""
     company = str(row.get("Company", ""))
     role = str(row.get("Role", ""))
     update_date = str(row.get("Last Update Date", ""))
@@ -393,7 +398,7 @@ def _process_rejected_entry(driver, wait, notion, row, index, total):
             _report_missing_entry(driver, index, company)
             return
 
-        _update_rejected_entry(driver, wait, notion, row, company, absagegrund, entry)
+        _update_rejected_entry(driver, wait, store, row, company, absagegrund, entry)
     except (NoSuchElementException, TimeoutException, WebDriverException) as exc:
         print(f"   ❌ Error updating {company}: {exc}")
         driver.save_screenshot(f"results/jobroom_update_error_{index}.png")
@@ -405,7 +410,8 @@ def _report_missing_entry(driver, index, company):
     driver.save_screenshot(f"results/jobroom_update_notfound_{index}.png")
 
 
-def _update_rejected_entry(driver, wait, notion, row, company, absagegrund, entry):
+def _update_rejected_entry(driver, wait, store, row, company, absagegrund, entry):
+    """Apply rejection details and mark a confirmed tracker row as processed."""
     driver.execute_script(SCROLL_INTO_VIEW_SCRIPT, entry)
     time.sleep(1)
 
@@ -417,21 +423,22 @@ def _update_rejected_entry(driver, wait, notion, row, company, absagegrund, entr
     input(f"\n   Review entry for {company}. Press Enter to confirm and continue...")
 
     print(f"   ✅ Updated {company} to Absage")
-    _update_notion_tracked(notion, row["id"])
+    _update_notion_tracked(store, row["id"])
 
 
-def _update_notion_tracked(notion, page_id):
-    success = notion.update_row(
+def _update_notion_tracked(store, page_id):
+    """Mark a tracker row as processed and report whether the update succeeded."""
+    success = store.update_row(
         page_id=page_id,
         properties={"Tracked": {"checkbox": True}},
     )
     if success:
         print("   → Record processed")
     else:
-        print("   → Failed to update Notion record. Please check Notion database.")
+        print("   → Failed to update tracker record. Please check the database.")
 
 
-def update_rejected_records(driver, wait, df, notion):
+def update_rejected_records(driver, wait, df, store):
     """Update existing entries that have been rejected.
 
     Finds entries on the current work-efforts page that are still marked as
@@ -448,7 +455,7 @@ def update_rejected_records(driver, wait, df, notion):
         driver: Selenium WebDriver instance
         wait: WebDriverWait instance
         df: Dataframe with rejected records to update
-        notion: NotionHelper instance
+        store: ApplicationStore instance
     """
     driver.get(get_website_url() + "work-efforts")
     time.sleep(3)
@@ -456,7 +463,7 @@ def update_rejected_records(driver, wait, df, notion):
     _expand_month_section(driver, df)
 
     for index, row in df.iterrows():
-        _process_rejected_entry(driver, wait, notion, row, index, len(df))
+        _process_rejected_entry(driver, wait, store, row, index, len(df))
 
 
 def _entry_text(entry):

@@ -2,7 +2,10 @@
 
 ## Unreleased
 
-- Breaking change: `create_page` now maps `Role` to the Notion title property
-  and `Company` to rich text. Existing databases must rename their title
-  property from `Company` to `Role`, or provide a `prop_name_map` override,
-  before using `create_page`.
+- Breaking change: replaced the Notion backend with a local SQLite database.
+  Records are now stored in `data/applications.db` (or `JOBROOM_DB_PATH`) via
+  the new `ApplicationStore` class, a drop-in replacement for the old Notion
+  helper. The `notion-client` dependency and all Notion configuration
+  (`NOTION_API_KEY`, `DATABASE_ID`, property maps) have been removed.
+- Added a `list` command that prints all tracked applications.
+- Renamed the package from `selenium_notion_autofill` to `jobroom_helper`.

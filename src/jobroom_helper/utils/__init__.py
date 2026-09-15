@@ -1,6 +1,6 @@
-"""Utility modules for Notion-Selenium Autofill."""
+"""Utility modules for the Job-Room autofill tool."""
 
-from .notion_helper import NotionHelper
+from .db_helper import ApplicationStore
 from .selenium_helper import (
     fill_checkbox,
     fill_field,
@@ -12,7 +12,7 @@ from .selenium_helper import (
 from .session_helper import load_session, save_session
 
 __all__ = [
-    "NotionHelper",
+    "ApplicationStore",
     "load_session",
     "save_session",
     "handle_login",

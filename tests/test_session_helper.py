@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from selenium.common.exceptions import WebDriverException
 
-from selenium_notion_autofill.utils import session_helper
+from jobroom_helper.utils import session_helper
 
 
 class DummyDriver:

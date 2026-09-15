@@ -1,63 +1,75 @@
 # API Documentation
 
-## NotionHelper
+## ApplicationStore
 
-Helper class for interacting with Notion API.
+Local SQLite-backed store for tracked job applications. Drop-in replacement for
+the previous Notion helper.
 
 ### Usage
 
 ```python
-from selenium_notion_autofill.utils import load_cookies, save_cookies
-from selenium import webdriver
+from jobroom_helper.utils import ApplicationStore
 
-driver = webdriver.Chrome()
+store = ApplicationStore()  # uses JOBROOM_DB_PATH or data/applications.db
 
-# Save cookies after login
-save_cookies(driver)
+row_id = store.create_page(
+    properties={
+        "Company": "Acme",
+        "Role": "Engineer",
+        "URL": "https://example.com/job",
+        "Stage": "Applied",
+    }
+)
 
-# Load cookies in a new session
-load_cookies(driver)
+df = store.get_database_data()
 ```
 
 ### Methods
 
-#### `__init__(api_key: str)`
+#### `__init__(db_path: str | None = None)`
 
-Initialize the helper with Notion API key.
-
-**Parameters:**
-
-- `api_key` (str): Notion Integration API key
-
-#### `get_database_data(database_id: str, filter: Optional[Dict] = None) -> pd.DataFrame`
-
-Fetch all rows from a Notion database.
+Open (creating if needed) the SQLite database and ensure the table exists.
 
 **Parameters:**
 
-- `database_id` (str): The ID of the Notion database
-- `filter` (dict, optional): Filter to apply to the query
+- `db_path` (str, optional): Path to the SQLite file. Defaults to the
+  `JOBROOM_DB_PATH` environment variable, else `data/applications.db`.
+
+#### `get_database_data(filter: dict | None = None) -> pd.DataFrame`
+
+Fetch matching rows from the database.
+
+**Parameters:**
+
+- `database_id`: Accepted for signature compatibility; ignored.
+- `filter` (dict, optional): A supported filter dict (the shapes built by
+  `get_month_filter`, `get_rejected_filter`, and the company-address lookup),
+  translated to SQL `WHERE` clauses.
 
 **Returns:**
 
-- `pd.DataFrame`: DataFrame containing database records
+- `pd.DataFrame`: DataFrame with the canonical application columns plus `id`.
 
-**Raises:**
+#### `create_page(properties: dict | None = None) -> str | None`
 
-- `httpx.HTTPStatusError`: If the API request fails
-
-#### `update_row(page_id: str, properties: Dict[str, Any]) -> bool`
-
-Update a Notion page with new properties.
-
-**Parameters:**
-
-- `page_id` (str): The ID of the Notion page
-- `properties` (dict): Dictionary of properties to update
+Insert a new application row from canonical scalar properties. `URL` is unique;
+if the URL already exists the existing id is returned without inserting a
+duplicate.
 
 **Returns:**
 
-- `bool`: True if successful, False otherwise
+- `str`: The row id on success.
+- `None`: On failure.
+
+#### `update_row(page_id: str, properties: dict) -> bool`
+
+Update columns for the row with the given id. Notion-style property dicts
+(`{"checkbox": v}`, `{"status": {"name": v}}`, …) are unwrapped to scalars
+before writing; plain scalars are accepted too.
+
+**Returns:**
+
+- `bool`: True on success, False if the row does not exist or on error.
 
 ## Session Helper
 
@@ -65,22 +77,10 @@ Helper functions for managing Selenium WebDriver sessions.
 
 ### Functions
 
-#### `save_cookies(driver)`
+#### `save_session(driver)`
 
-Save cookies from the current driver session to a JSON file.
+Save cookies and storage from the current driver session to disk.
 
-**Parameters:**
+#### `load_session(driver) -> bool`
 
-- `driver`: Selenium WebDriver instance
-
-#### `load_cookies(driver) -> bool`
-
-Load cookies from a JSON file into the driver session.
-
-**Parameters:**
-
-- `driver`: Selenium WebDriver instance
-
-**Returns:**
-
-- `bool`: True if cookies were loaded, False otherwise
+Restore a session saved today into the driver. Returns True if restored.

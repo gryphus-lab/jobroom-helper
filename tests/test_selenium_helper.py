@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from selenium.common.exceptions import TimeoutException
 
-from selenium_notion_autofill.utils import selenium_helper
+from jobroom_helper.utils import selenium_helper
 
 
 def test_resolve_type_selector_known():
@@ -344,6 +344,7 @@ def test_fill_absagegrund_uses_fallback_if_no_inline_field(monkeypatch):
 
 
 def test_update_notion_tracked_prints_status(monkeypatch):
+    """Tracker updates print distinct success and failure messages."""
     printed = []
 
     class Notion:
@@ -360,7 +361,9 @@ def test_update_notion_tracked_prints_status(monkeypatch):
     selenium_helper._update_notion_tracked(Notion(False), "page123")
     assert any("Record processed" in item for args in printed for item in args)
     assert any(
-        "Failed to update Notion record." in item for args in printed for item in args
+        "Failed to update tracker record." in item
+        for args in printed
+        for item in args
     )
 
 
