@@ -55,9 +55,14 @@ REJECTION_SELECTORS = {
 
 ENTRY_SELECTOR = "alv-work-effort"
 
+# arbeit.swiss Job-Room base URL. Stable public endpoint, so it defaults here
+# and only needs WEBSITE_URL in the environment to point at a different host.
+DEFAULT_WEBSITE_URL = "https://www.job-room.ch/"
+
 
 def get_website_url() -> str:
-    return _required_setting("WEBSITE_URL")
+    """Return the Job-Room base URL (env WEBSITE_URL or the default)."""
+    return os.environ.get("WEBSITE_URL", "").strip() or DEFAULT_WEBSITE_URL
 
 
 def is_browser_fallback_enabled() -> bool:

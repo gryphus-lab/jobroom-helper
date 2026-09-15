@@ -35,14 +35,16 @@ def test_get_db_path_env(monkeypatch):
     assert get_db_path() == "/tmp/db.sqlite"
 
 
-def test_get_website_url_requires_setting(monkeypatch):
-    """Website URL access succeeds only while the setting is present."""
+def test_get_website_url_honors_env_override(monkeypatch):
+    """An explicit WEBSITE_URL takes precedence over the default."""
     monkeypatch.setenv("WEBSITE_URL", "https://example.com")
     assert get_website_url() == "https://example.com"
 
+
+def test_get_website_url_defaults_to_job_room(monkeypatch):
+    """Without an override, the Job-Room base URL is used out of the box."""
     monkeypatch.delenv("WEBSITE_URL", raising=False)
-    with pytest.raises(RuntimeError, match="WEBSITE_URL"):
-        get_website_url()
+    assert get_website_url() == "https://www.job-room.ch/"
 
 
 @pytest.mark.parametrize(
