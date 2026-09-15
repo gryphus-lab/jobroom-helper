@@ -132,14 +132,12 @@ class ApplicationStore:
     def get_database_data(
         self,
         filter: Optional[Dict] = None,
-        database_id: Optional[str] = None,
     ) -> pd.DataFrame:
         """Return all matching rows as a DataFrame.
 
         Args:
             filter: Optional Notion-style filter dict; the known shapes built by
                 the callers are translated into SQL WHERE clauses.
-            database_id: Ignored legacy Notion database identifier.
 
         Returns:
             pd.DataFrame with the canonical application columns plus ``id``.
@@ -215,8 +213,6 @@ class ApplicationStore:
     def create_page(
         self,
         properties: Optional[Dict[str, Any]] = None,
-        database_id: Optional[str] = None,
-        prop_name_map: Optional[Dict[str, str]] = None,
     ) -> Optional[str]:
         """Insert a new application row from canonical scalar properties.
 
@@ -225,8 +221,6 @@ class ApplicationStore:
 
         Args:
             properties: Canonical-key -> scalar value mapping.
-            database_id: Ignored legacy Notion database identifier.
-            prop_name_map: Ignored legacy Notion property-name mapping.
 
         Returns:
             The row id on success, or None on failure.

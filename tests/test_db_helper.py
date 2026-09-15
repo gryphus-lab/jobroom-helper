@@ -213,14 +213,10 @@ def test_update_row_missing_id_returns_false(store):
     assert store.update_row("does-not-exist", {"Tracked": {"checkbox": True}}) is False
 
 
-def test_create_page_ignores_database_id_and_prop_name_map(store):
-    """Legacy compatibility arguments do not alter canonical storage."""
-    row_id = store.create_page(
-        database_id="ignored",
-        properties=_base_properties(),
-        prop_name_map={"Company": "Firma"},
-    )
-    df = store.get_database_data(database_id="ignored")
+def test_create_page_uses_canonical_property_names(store):
+    """Canonical property names are preserved in storage."""
+    row_id = store.create_page(properties=_base_properties())
+    df = store.get_database_data()
     assert df.loc[0, "id"] == row_id
     # Canonical column name is used, not the remapped one.
     assert "Company" in df.columns
