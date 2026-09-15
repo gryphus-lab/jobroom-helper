@@ -92,10 +92,13 @@ autofill
 
 ## Configuration
 
-Update `src/jobroom_helper/config.py` with:
+Configure the environment-dependent values in `.env`:
 
 - `WEBSITE_URL`: Target website URL
 - `JOBROOM_DB_PATH`: (optional) path to the SQLite database
+
+Update `src/jobroom_helper/config.py` with:
+
 - `FIELD_SELECTORS`: CSS selectors for form fields
 
 ## Development Workflow

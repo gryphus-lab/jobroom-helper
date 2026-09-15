@@ -201,9 +201,7 @@ def test_run_create_from_args_requires_arguments(capsys):
 def test_run_create_from_args_forwards_options(monkeypatch, dry_run):
     """Test that run_create_from_args correctly forwards parsed options.
 
-    The store is always constructed inside _run_create_from_args (None passed
-    in), so the created store is forwarded to _run_create regardless of
-    dry-run.
+    Dry runs do not construct or receive a database store.
     """
     created_store = object()
     calls = []
@@ -229,7 +227,7 @@ def test_run_create_from_args_forwards_options(monkeypatch, dry_run):
 
     assert calls == [
         (
-            created_store,
+            None if dry_run else created_store,
             "https://example.com/job",
             {
                 "dry_run": dry_run,
@@ -1097,11 +1095,13 @@ def test_run_create_dry_run_prints_canonical_properties(monkeypatch, capsys):
     assert "'Role': 'Developer'" in output
     assert "'Stage': 'Applied'" in output
     assert "'URL': 'https://93.184.216.34/jobs/1'" in output
-    # Optional fields not in FIELD_SELECTORS are dropped.
-    assert "   Source:" not in output
-    assert "   Notes:" not in output
-    assert "   Last Update Date:" not in output
-    assert "   Update Details:" not in output
+    assert "   Source: [length=12, preview=Company site]" in output
+    assert "   Notes: None" in output
+    assert "   Last Update Date:" in output
+    assert "   Update Details: [length=9, preview=New entry]" in output
+    assert "'Source': 'Company site'" in output
+    assert "'Notes': None" in output
+    assert "'Description': 'Scraped description'" in output
     assert store.calls == []
 
 
@@ -1128,10 +1128,11 @@ def test_run_create_populates_zurich_fields(monkeypatch):
     assert properties["Company"] == "Zurich Insurance"
     assert properties["Role"] == "Head Legal IT and Operations 80-100%"
     assert properties["Stage"] == "Applied"
-    assert "Source" not in properties
-    assert "Notes" not in properties
-    assert "Last Update Date" not in properties
-    assert "Update Details" not in properties
+    assert properties["Source"] == "Company site"
+    assert properties["Notes"] == "Job description text"
+    assert properties["Last Update Date"]
+    assert properties["Update Details"] == "New entry"
+    assert "Description" in properties
 
 
 @pytest.mark.parametrize(
@@ -1174,10 +1175,11 @@ def test_run_create_calls_store_with_canonical_properties(monkeypatch):
     assert properties["Type"] == "electronic"
     assert properties["Applied date"]
     assert properties["Stage"] == "Applied"
-    assert "Source" not in properties
-    assert "Notes" not in properties
-    assert "Last Update Date" not in properties
-    assert "Update Details" not in properties
+    assert properties["Source"] == "Company site"
+    assert "Notes" in properties
+    assert properties["Last Update Date"]
+    assert properties["Update Details"] == "New entry"
+    assert "Description" in properties
     assert "Tracked" not in properties
 
 
@@ -1198,9 +1200,7 @@ def test_run_create_reuses_existing_company_address(monkeypatch):
 
 def test_run_create_forces_stage_applied(monkeypatch):
     """Newly created applications always begin in the Applied stage."""
-    monkeypatch.setattr(
-        main_mod, "_scrape_url", lambda url: {"url": url, "h1": "Dev"}
-    )
+    monkeypatch.setattr(main_mod, "_scrape_url", lambda url: {"url": url, "h1": "Dev"})
     store = FakeStore()
     main_mod._run_create(store, "https://93.184.216.34/jobs/9")
     _, properties = _create_call(store)
@@ -1244,7 +1244,9 @@ def test_main_dispatches_modes(monkeypatch):
         "_run_update_rejections",
         lambda store: calls.append(("update", store)),
     )
-    monkeypatch.setattr(main_mod, "_run_list", lambda store: calls.append(("list", store)))
+    monkeypatch.setattr(
+        main_mod, "_run_list", lambda store: calls.append(("list", store))
+    )
     monkeypatch.setattr(main_mod.sys, "argv", ["prog", "new"])
 
     main_mod.main()
@@ -1288,6 +1290,7 @@ def test_run_list_empty_and_populated(capsys):
     assert "1 tracked application(s)" in out
     assert "Acme" in out
     assert "Engineer" in out
+    assert "Company site" in out
 
 
 def test_run_new_entries_handles_empty_and_error(monkeypatch):

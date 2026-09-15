@@ -35,7 +35,7 @@ Open (creating if needed) the SQLite database and ensure the table exists.
 - `db_path` (str, optional): Path to the SQLite file. Defaults to the
   `JOBROOM_DB_PATH` environment variable, else `data/applications.db`.
 
-#### `get_database_data(database_id=None, filter: dict | None = None) -> pd.DataFrame`
+#### `get_database_data(filter: dict | None = None) -> pd.DataFrame`
 
 Fetch matching rows from the database.
 
@@ -50,7 +50,7 @@ Fetch matching rows from the database.
 
 - `pd.DataFrame`: DataFrame with the canonical application columns plus `id`.
 
-#### `create_page(database_id=None, properties: dict, prop_name_map=None) -> str | None`
+#### `create_page(properties: dict | None = None) -> str | None`
 
 Insert a new application row from canonical scalar properties. `URL` is unique;
 if the URL already exists the existing id is returned without inserting a

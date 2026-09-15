@@ -237,7 +237,7 @@ def _run_create_from_args(store, args: list[str]) -> None:
         sys.exit(1)
 
     parsed_args = _create_arg_parser().parse_args(args)
-    if store is None:
+    if not parsed_args.dry_run and store is None:
         store = ApplicationStore()
     _run_create(
         store,
@@ -904,19 +904,6 @@ def _resolve_company_name(
     return hostname
 
 
-# Stage is required for every newly created application.
-_ALWAYS_KEEP_CREATE_FIELDS = ("Stage",)
-
-
-def _remove_unmapped_optional_properties(properties: dict[str, object]) -> None:
-    """Remove unconfigured optional properties in place, preserving required ones."""
-    for field_name in OPTIONAL_CREATE_FIELDS:
-        if field_name in _ALWAYS_KEEP_CREATE_FIELDS:
-            continue
-        if field_name not in FIELD_SELECTORS:
-            properties.pop(field_name, None)
-
-
 def _build_create_properties(
     url: str,
     scraped: dict,
@@ -1061,7 +1048,6 @@ def _run_create(
     title = role_override or scraped.get("h1") or scraped.get("title") or hostname
     company = _resolve_company_name(hostname, company_override, scraped.get("company"))
     properties = _build_create_properties(url, scraped, company, title)
-    _remove_unmapped_optional_properties(properties)
     # Dry-run must not touch the database; only look up a reusable address for
     # a real create.
     if not dry_run:
