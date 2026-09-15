@@ -50,7 +50,7 @@ Fetch matching rows from the database.
 
 - `pd.DataFrame`: DataFrame with the canonical application columns plus `id`.
 
-#### `create_page(database_id: str | None = None, properties: dict | None = None, prop_name_map: dict | None = None) -> str | None`
+#### `create_page(properties: dict | None = None) -> str | None`
 
 Insert a new application row from canonical scalar properties. `URL` is unique;
 if the URL already exists the existing id is returned without inserting a
