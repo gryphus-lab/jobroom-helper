@@ -60,31 +60,28 @@ def unwrap_property(value: Any) -> Any:
     if not isinstance(value, dict):
         return value
 
-    if "checkbox" in value:
-        return value["checkbox"]
-    if "url" in value:
-        return value["url"]
-    if "email" in value:
-        return value["email"]
-    if "phone_number" in value:
-        return value["phone_number"]
-    if "number" in value:
-        return value["number"]
-    if "status" in value:
-        return (value.get("status") or {}).get("name")
-    if "select" in value:
-        return (value.get("select") or {}).get("name")
-    if "date" in value:
-        return (value.get("date") or {}).get("start")
+    scalar_keys = ("checkbox", "url", "email", "phone_number", "number")
+    for key in scalar_keys:
+        if key in value:
+            return value[key]
+
+    nested_keys = {"status": "name", "select": "name", "date": "start"}
+    for key, nested_key in nested_keys.items():
+        if key in value:
+            return (value.get(key) or {}).get(nested_key)
+
     for rich_key in ("rich_text", "title"):
         if rich_key in value:
-            fragments = value.get(rich_key) or []
-            return "".join(
-                (fragment.get("text", {}) or {}).get("content", "")
-                for fragment in fragments
-                if isinstance(fragment, dict)
-            )
+            return _unwrap_text_fragments(value.get(rich_key))
     return value
+
+
+def _unwrap_text_fragments(fragments: Any) -> str:
+    return "".join(
+        (fragment.get("text", {}) or {}).get("content", "")
+        for fragment in (fragments or [])
+        if isinstance(fragment, dict)
+    )
 
 
 def _quote(identifier: str) -> str:
@@ -133,14 +130,16 @@ class ApplicationStore:
             conn.commit()
 
     def get_database_data(
-        self, database_id: Optional[str] = None, filter: Optional[Dict] = None
+        self,
+        filter: Optional[Dict] = None,
+        database_id: Optional[str] = None,
     ) -> pd.DataFrame:
         """Return all matching rows as a DataFrame.
 
         Args:
-            database_id: Accepted for signature compatibility; ignored.
             filter: Optional Notion-style filter dict; the known shapes built by
                 the callers are translated into SQL WHERE clauses.
+            database_id: Ignored legacy Notion database identifier.
 
         Returns:
             pd.DataFrame with the canonical application columns plus ``id``.
@@ -215,8 +214,8 @@ class ApplicationStore:
 
     def create_page(
         self,
-        database_id: Optional[str] = None,
         properties: Optional[Dict[str, Any]] = None,
+        database_id: Optional[str] = None,
         prop_name_map: Optional[Dict[str, str]] = None,
     ) -> Optional[str]:
         """Insert a new application row from canonical scalar properties.
@@ -225,9 +224,9 @@ class ApplicationStore:
         existing id is returned without inserting a duplicate.
 
         Args:
-            database_id: Accepted for signature compatibility; ignored.
             properties: Canonical-key -> scalar value mapping.
-            prop_name_map: Accepted for signature compatibility; ignored.
+            database_id: Ignored legacy Notion database identifier.
+            prop_name_map: Ignored legacy Notion property-name mapping.
 
         Returns:
             The row id on success, or None on failure.
@@ -260,10 +259,18 @@ class ApplicationStore:
             placeholders = ", ".join("?" for _ in columns)
             column_sql = ", ".join(_quote(col) for col in columns)
             with self._connect() as conn:
-                conn.execute(
-                    f"INSERT INTO applications ({column_sql}) VALUES ({placeholders})",
+                cursor = conn.execute(
+                    f"""
+                    INSERT INTO applications ({column_sql}) VALUES ({placeholders})
+                    ON CONFLICT("URL") DO NOTHING
+                    """,
                     [values[col] for col in columns],
                 )
+                if cursor.rowcount == 0 and url:
+                    row = conn.execute(
+                        'SELECT id FROM applications WHERE "URL" = ?', [url]
+                    ).fetchone()
+                    return row["id"] if row else None
                 conn.commit()
             print(f"   ✅ Application row created (id: {row_id[:8]}...)")
             return row_id
@@ -322,6 +329,4 @@ def _to_storage(value: Any) -> Any:
     """Normalize a value for storage as TEXT (booleans -> "True"/"False")."""
     if value is None:
         return None
-    if isinstance(value, bool):
-        return str(value)
-    return str(value) if not isinstance(value, (int, float)) else str(value)
+    return str(value)

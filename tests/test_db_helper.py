@@ -1,9 +1,16 @@
 """Tests for the local SQLite ApplicationStore."""
 
+import multiprocessing
+
 import pytest
 
 from jobroom_helper.config import get_db_path
 from jobroom_helper.utils.db_helper import ApplicationStore, unwrap_property
+
+
+def _create_page_in_process(db_path, barrier):
+    barrier.wait()
+    return ApplicationStore(db_path=db_path).create_page(properties=_base_properties())
 
 
 @pytest.fixture
@@ -48,9 +55,7 @@ def test_create_page_inserts_row_and_returns_id(store):
 def test_create_page_dedups_on_duplicate_url(store, capsys):
     """Repeated creates for one URL reuse the original application row."""
     first_id = store.create_page(properties=_base_properties())
-    second_id = store.create_page(
-        properties=_base_properties(Company="Acme Duplicate")
-    )
+    second_id = store.create_page(properties=_base_properties(Company="Acme Duplicate"))
 
     assert first_id == second_id
     out = capsys.readouterr().out
@@ -60,6 +65,24 @@ def test_create_page_dedups_on_duplicate_url(store, capsys):
     assert len(df) == 1
     # The duplicate did not overwrite the original row.
     assert df.loc[0, "Company"] == "Acme"
+
+
+def test_create_page_concurrent_creates_deduplicate(tmp_path):
+    db_path = str(tmp_path / "applications.db")
+    ApplicationStore(db_path=db_path)
+    context = multiprocessing.get_context("spawn")
+
+    with context.Manager() as manager:
+        barrier = manager.Barrier(2)
+        with context.Pool(2) as pool:
+            row_ids = pool.starmap(
+                _create_page_in_process,
+                [(db_path, barrier), (db_path, barrier)],
+            )
+
+    assert row_ids[0] == row_ids[1]
+    assert row_ids[0]
+    assert len(ApplicationStore(db_path=db_path).get_database_data()) == 1
 
 
 def test_get_database_data_returns_expected_columns(store):
@@ -170,9 +193,7 @@ def test_update_row_unwraps_checkbox_and_status(store):
     row_id = store.create_page(properties=_base_properties())
 
     assert store.update_row(row_id, {"Tracked": {"checkbox": True}}) is True
-    assert (
-        store.update_row(row_id, {"Stage": {"status": {"name": "Rejected"}}}) is True
-    )
+    assert store.update_row(row_id, {"Stage": {"status": {"name": "Rejected"}}}) is True
 
     df = store.get_database_data()
     assert df.loc[0, "Tracked"] == "True"
@@ -251,6 +272,7 @@ def test_unwrap_property(value, expected):
 
 def test_create_page_handles_failure(monkeypatch, store):
     """Database connection failures make application creation return None."""
+
     def boom(*args, **kwargs):
         """Raise a representative SQLite connection error."""
         raise __import__("sqlite3").Error("db is broken")
