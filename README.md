@@ -1,20 +1,23 @@
-# Notion Selenium Autofill
+# Job-Room Helper
 
-Automates web form filling by reading records from a Notion database and using Selenium to populate a browser form.
+Automates web form filling by reading job-application records from a local
+SQLite database and using Selenium to populate the Job-Room work-effort form.
 
 ## Features
 
-- Queries Notion for records using the Notion REST API via `httpx`
-- Converts Notion properties into a pandas `DataFrame`
+- Stores applications in a local SQLite database (no external service required)
+- Exposes the records as a pandas `DataFrame`
 - Opens Chrome with Selenium and `webdriver-manager`
 - Fills text inputs, typeahead fields, checkboxes, and radio buttons
-- Handles interview records by checking `Vorstellungsgespräch` only when Notion marks the row as an interview
-- Marks processed Notion records as tracked by updating the `Tracked` checkbox
+- Handles interview records by checking `Vorstellungsgespräch` only when the row is an interview
+- Marks processed records as tracked by updating the `Tracked` flag
+- `create` command scrapes a job URL and inserts a new application (dedup by URL)
+- `list` command prints all tracked applications
 
 ## Overview
 
-- Filters Notion records for the current month where `Applied date` is within the month and `Tracked` is `false`
-- Processes all matching records from Notion
+- Filters records for the current month where `Applied date` is within the month and `Tracked` is `false`
+- Processes all matching records from the local tracker
 - Requires a manual login step before automation continues
 - Waits for user confirmation before form submission and before closing the browser
 
@@ -39,86 +42,80 @@ Automates web form filling by reading records from a Notion database and using S
    cp .env.example .env
    ```
 
-3. Configure your credentials and target website in `.env`:
-   - Set `NOTION_API_KEY`
-   - Set `DATABASE_ID`
+3. Configure your target website (and optionally the DB path) in `.env`:
    - Set `WEBSITE_URL`
+   - Optionally set `JOBROOM_DB_PATH` (defaults to `data/applications.db`)
+   - Optionally set `ENABLE_BROWSER_FALLBACK`
 
-4. Update `FIELD_SELECTORS` in `src/selenium_notion_autofill/config.py` if the target form changes.
+4. Update `FIELD_SELECTORS` in `src/jobroom_helper/config.py` if the target form changes.
 
 ## Project Structure
 
 ```text
-selenium-notion-autofill/
-├── src/selenium_notion_autofill/
+jobroom-helper/
+├── src/jobroom_helper/
 │   ├── __init__.py              # Package initialization
 │   ├── __main__.py              # Main entry point
 │   ├── config.py                # Configuration variables
 │   └── utils/
 │       ├── __init__.py
-│       ├── notion_helper.py     # Notion API client
+│       ├── db_helper.py         # Local SQLite application store
 │       ├── selenium_helper.py   # Selenium form filling helpers
 │       └── session_helper.py    # Selenium session management
 ├── tests/                       # Unit tests
 │   ├── test_config.py
-│   ├── test_notion_helper.py
+│   ├── test_db_helper.py
 │   ├── test_selenium_helper.py
 │   └── test_session_helper.py
 ├── docs/                        # Documentation
-├── pyproject.toml              # Project configuration
-├── mise.toml                   # Mise/task configuration
+├── pyproject.toml               # Project configuration
+├── mise.toml                    # Mise/task configuration
 └── README.md
 ```
 
 ## Usage
 
-### Create a Notion entry from a URL
+### Create a tracker entry from a URL
 
-A new mise task `create` is available to create a Notion page from a URL by scraping basic metadata.
+The `create` command inserts a new application into the local database by
+scraping basic metadata from a URL. URLs are unique, so re-running `create`
+on the same URL reuses the existing entry instead of creating a duplicate.
 
 Examples:
 
 ```bash
-# Create and post to Notion
+# Create and store in the local tracker
 mise run create 'https://example.com/job'
 
-# Dry-run: print the Notion payload without posting
+# Dry-run: print the properties that would be inserted, without writing
 mise run create 'https://example.com/job' --dry-run
-
-# Use a JSON property map file to map canonical keys to your DB property names
-mise run create 'https://example.com/job' --prop-map=./prop_map.json
 
 # Override extracted company/role values
 mise run create 'https://example.com/job' --company='MyCo' --role='Engineer'
 ```
 
-The `--prop-map` JSON file should map canonical keys (Company, Role, URL, Date, Type, Applied date, Description, Tracked) to the Notion database property names.
+New applications always start at `Stage = "Applied"`.
 
-### Notion schema migration
+### List tracked applications
 
-The canonical Notion property mapping now uses a title property for `Role` and a rich-text property for `Company`. Existing databases must rename their title property from `Company` to `Role` before using `create_page`, or provide a `prop_name_map` override that maps those canonical names to the existing database properties.
-
-The canonical optional keys and their required Notion property types are:
-
-| Canonical key      | Notion property type |
-| ------------------ | -------------------- |
-| `Stage`            | Status               |
-| `Source`           | Select               |
-| `Notes`            | Rich text            |
-| `Last Update Date` | Date                 |
-| `Update Details`   | Rich text            |
-
-These canonical keys can be remapped to existing database property names with `--prop-map` or `NOTION_PROPERTY_MAP_JSON`. These fields are silently dropped unless they are present in `FIELD_SELECTORS` or covered by a property map. The default stage value is `Applied`, so the target status property must define an `Applied` option.
-These canonical keys can be remapped to existing database property names with `--prop-map` or `NOTION_PROPERTY_MAP_JSON`. These fields are silently dropped unless they are selected in `FIELD_SELECTORS` or covered by a property map. The default stage value is `Applied`, so the target status property must define an `Applied` option.
+```bash
+mise run list
+# or
+uv run -m jobroom_helper list
+```
 
 ### Run with uv
 
 ```bash
-# Run the main script
-uv run -m selenium_notion_autofill
+# Process new untracked entries for the current month
+uv run -m jobroom_helper new
+
+# Update rejected entries
+uv run -m jobroom_helper update-rejections
 
 # Or using mise
-mise run main
+mise run new
+mise run update
 ```
 
 ### Run tests
@@ -149,13 +146,13 @@ cp .env.example .env
 
 Then set:
 
-- `NOTION_API_KEY` — your Notion integration token
-- `DATABASE_ID` — the Notion database ID to query
 - `WEBSITE_URL` — the target website URL
+- `JOBROOM_DB_PATH` — (optional) path to the SQLite database
+- `ENABLE_BROWSER_FALLBACK` — (optional) enable the headless-browser scraping fallback
 
-Edit `src/selenium_notion_autofill/config.py` only when the target form selectors change:
+Edit `src/jobroom_helper/config.py` only when the target form selectors change:
 
-- `FIELD_SELECTORS` — mapping of Notion columns to CSS selectors for the web form
+- `FIELD_SELECTORS` — mapping of tracker columns to CSS selectors for the web form
 
 ### Important
 
@@ -169,8 +166,6 @@ GitHub Actions runs `mise run install`, `mise run test`, and then the SonarQube 
 
 The SonarQube scan requires `SONAR_TOKEN` to be configured as a GitHub Actions secret.
 
-> Do not commit real API keys or secrets to version control.
-
 ## Execution
 
 Run the project with:
@@ -181,15 +176,15 @@ uv run autofill
 
 The script will:
 
-1. query Notion for current-month, untracked records
+1. query the local tracker for current-month, untracked records
 2. open Chrome and navigate to the configured site
 3. prompt for manual login
 4. process each matching row
 5. wait for confirmation before submission
-6. update the Notion page's `Tracked` checkbox on success
+6. update the record's `Tracked` flag on success
 
 ## Notes
 
 - Error screenshots are saved under `results/jobroom_fill_field_error.png` and `results/jobroom_main_error.png`.
-- `utils/notion_helper.py` uses `httpx` directly instead of the official Notion SDK.
+- `utils/db_helper.py` uses the stdlib `sqlite3` module and `pandas`.
 - The project includes a development dependency on `ruff`.

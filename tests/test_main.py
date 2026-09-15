@@ -7,7 +7,7 @@ import httpx
 import pandas as pd
 import pytest
 
-from selenium_notion_autofill import __main__ as main_mod
+from jobroom_helper import __main__ as main_mod
 
 # Real implementation captured at import time, before the autouse fixture
 # stubs it out, so fallback-specific tests can exercise the genuine function.
@@ -70,51 +70,44 @@ def _client_for_response(response, **kwargs):
     return FakeClient(**kwargs)
 
 
-class FakeNotion:
+class FakeStore:
     def __init__(self, df=None):
         self.df = df if df is not None else pd.DataFrame()
         self.calls = []
 
-    def get_database_data(self, database_id, filter=None):
-        self.calls.append((database_id, filter))
+    def get_database_data(self, database_id=None, filter=None):
+        self.calls.append(("get", filter))
         return self.df.copy()
 
     def update_row(self, page_id, properties):
-        self.calls.append((page_id, properties))
+        self.calls.append(("update", page_id, properties))
         return True
 
-    def create_page(self, database_id, properties, prop_name_map=None):
-        self.calls.append((database_id, properties, prop_name_map))
+    def create_page(self, database_id=None, properties=None, prop_name_map=None):
+        self.calls.append(("create", properties))
         return "new-page-id"
 
 
-def _create_call(notion):
-    """Return the create_page call from FakeNotion.calls, ignoring lookups."""
-    for call in notion.calls:
-        if len(call) == 3:
+def _create_call(store):
+    """Return the create_page call from FakeStore.calls, ignoring lookups."""
+    for call in store.calls:
+        if call[0] == "create":
             return call
     raise AssertionError("create_page was not called")
 
 
-@pytest.mark.parametrize(
-    ("company_prop", "filter_type"),
-    [("Firma", "rich_text"), ("Name", "title"), ("Title", "title")],
-)
-def test_existing_company_address_uses_matching_text_filter(company_prop, filter_type):
-    notion = FakeNotion(pd.DataFrame({"Adresse": ["Main Street 1"]}))
+# Backwards-compatible alias for tests that still build a fake store instance.
+FakeNotion = FakeStore
 
-    address = main_mod._existing_company_address(
-        notion,
-        "Acme",
-        {"Company": company_prop, "Address": "Adresse"},
-    )
+
+def test_existing_company_address_uses_company_filter():
+    store = FakeStore(pd.DataFrame({"Address": ["Main Street 1"]}))
+
+    address = main_mod._existing_company_address(store, "Acme")
 
     assert address == "Main Street 1"
-    assert notion.calls == [
-        (
-            main_mod.get_database_id(),
-            {"property": company_prop, filter_type: {"equals": "Acme"}},
-        )
+    assert store.calls == [
+        ("get", {"property": "Company", "rich_text": {"equals": "Acme"}})
     ]
 
 
@@ -168,7 +161,6 @@ def test_create_arg_parser_uses_expected_defaults():
 
     assert args.url == "https://example.com/job"
     assert args.dry_run is False
-    assert args.prop_map is None
     assert args.company_override is None
     assert args.role_override is None
 
@@ -179,8 +171,6 @@ def test_create_arg_parser_parses_optional_arguments():
         [
             "https://example.com/job",
             "--dry-run",
-            "--prop-map",
-            "properties.json",
             "--company",
             "Acme",
             "--role",
@@ -190,7 +180,6 @@ def test_create_arg_parser_parses_optional_arguments():
 
     assert args.url == "https://example.com/job"
     assert args.dry_run is True
-    assert args.prop_map == "properties.json"
     assert args.company_override == "Acme"
     assert args.role_override == "Software Engineer"
 
@@ -206,29 +195,27 @@ def test_run_create_from_args_requires_arguments(capsys):
 
 @pytest.mark.parametrize("dry_run", [True, False])
 def test_run_create_from_args_forwards_options(monkeypatch, dry_run):
-    """Test that run_create_from_args correctly forwards parsed options."""
-    original_notion = object()
-    created_notion = object()
+    """Test that run_create_from_args correctly forwards parsed options.
+
+    The store is always constructed inside _run_create_from_args (None passed
+    in), so the created store is forwarded to _run_create regardless of
+    dry-run.
+    """
+    created_store = object()
     calls = []
 
     monkeypatch.setattr(
-        main_mod, "_load_prop_name_map", lambda path: {"Company": "Firma"}
-    )
-    monkeypatch.setattr(
         main_mod,
         "_run_create",
-        lambda notion, url, **kwargs: calls.append((notion, url, kwargs)),
+        lambda store, url, **kwargs: calls.append((store, url, kwargs)),
     )
-    monkeypatch.setattr(main_mod, "get_notion_api_key", lambda: "api-key")
-    monkeypatch.setattr(main_mod, "NotionHelper", lambda api_key: created_notion)
+    monkeypatch.setattr(main_mod, "ApplicationStore", lambda: created_store)
 
     main_mod._run_create_from_args(
-        original_notion,
+        None,
         [
             "https://example.com/job",
             *(["--dry-run"] if dry_run else []),
-            "--prop-map",
-            "properties.json",
             "--company",
             "Acme",
             "--role",
@@ -238,11 +225,10 @@ def test_run_create_from_args_forwards_options(monkeypatch, dry_run):
 
     assert calls == [
         (
-            original_notion if dry_run else created_notion,
+            created_store,
             "https://example.com/job",
             {
                 "dry_run": dry_run,
-                "prop_name_map": {"Company": "Firma"},
                 "company_override": "Acme",
                 "role_override": "Software Engineer",
             },
@@ -748,14 +734,14 @@ def test_run_create_does_not_create_page_for_blocked_scrape(monkeypatch, capsys)
         "_scrape_url",
         lambda url: {"url": url, "title": "Access Denied", "blocked": "blocked"},
     )
-    notion = FakeNotion()
+    store = FakeStore()
 
     with pytest.raises(SystemExit):
-        main_mod._run_create(notion, "https://93.184.216.34/jobs/blocked")
+        main_mod._run_create(store, "https://93.184.216.34/jobs/blocked")
 
     output = capsys.readouterr().out
-    assert "Notion entry was not created: blocked" in output
-    assert notion.calls == []
+    assert "Entry was not created: blocked" in output
+    assert store.calls == []
 
 
 def test_scrape_url_returns_url_when_fetch_fails(monkeypatch):
@@ -1073,7 +1059,7 @@ def test_limited_response_stream_rejects_oversized_stream_without_content_length
     assert core_response.closed
 
 
-def test_run_create_dry_run_builds_mapped_payload(monkeypatch, capsys):
+def test_run_create_dry_run_prints_canonical_properties(monkeypatch, capsys):
     monkeypatch.setattr(
         main_mod,
         "_scrape_url",
@@ -1083,13 +1069,12 @@ def test_run_create_dry_run_builds_mapped_payload(monkeypatch, capsys):
             "description": "Scraped description",
         },
     )
-    notion = FakeNotion()
+    store = FakeStore()
 
     main_mod._run_create(
-        notion,
+        store,
         "https://93.184.216.34/jobs/1",
         dry_run=True,
-        prop_name_map={"Company": "Firma", "Role": "Stelle"},
         company_override="Acme",
         role_override="Developer",
     )
@@ -1097,19 +1082,21 @@ def test_run_create_dry_run_builds_mapped_payload(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "🔎 Scraped values from https://93.184.216.34/jobs/1:" in output
     assert "   title: [length=13, preview=Scraped title]" in output
-    assert "📝 Values prepared for Notion:" in output
+    assert "📝 Values prepared for the tracker:" in output
     assert "   Company: [length=4, preview=Acme]" in output
     assert "   Role: [length=9, preview=Developer]" in output
     assert "   Stage: [length=7, preview=Applied]" in output
-    assert "'Stage': {'status': {'name': 'Applied'}}" in output
+    assert "--- Dry run: properties to insert ---" in output
+    assert "'Company': 'Acme'" in output
+    assert "'Role': 'Developer'" in output
+    assert "'Stage': 'Applied'" in output
+    assert "'URL': 'https://93.184.216.34/jobs/1'" in output
+    # Optional fields not in FIELD_SELECTORS are dropped.
     assert "   Source:" not in output
     assert "   Notes:" not in output
     assert "   Last Update Date:" not in output
     assert "   Update Details:" not in output
-    assert "'Firma': {'rich_text': [{'text': {'content': 'Acme'}}]}" in output
-    assert "'Stelle': {'title': [{'text': {'content': 'Developer'}}]}" in output
-    assert "'URL': {'url': 'https://93.184.216.34/jobs/1'}" in output
-    assert notion.calls == []
+    assert store.calls == []
 
 
 def test_run_create_populates_zurich_fields(monkeypatch):
@@ -1123,14 +1110,14 @@ def test_run_create_populates_zurich_fields(monkeypatch):
             "text": "Job description text",
         },
     )
-    notion = FakeNotion()
+    store = FakeStore()
 
     main_mod._run_create(
-        notion,
+        store,
         "https://www.careers.zurich.com/job/1369843657",
     )
 
-    _, properties, _ = _create_call(notion)
+    _, properties = _create_call(store)
     assert properties["Company"] == "Zurich Insurance"
     assert properties["Role"] == "Head Legal IT and Operations 80-100%"
     assert properties["Stage"] == "Applied"
@@ -1138,29 +1125,6 @@ def test_run_create_populates_zurich_fields(monkeypatch):
     assert "Notes" not in properties
     assert "Last Update Date" not in properties
     assert "Update Details" not in properties
-
-
-def test_run_create_retains_optional_fields_in_property_map(monkeypatch):
-    monkeypatch.setattr(
-        main_mod,
-        "_scrape_url",
-        lambda url: {
-            "url": url,
-            "text": "Notes text",
-            "description": "Description text",
-        },
-    )
-    notion = FakeNotion()
-
-    main_mod._run_create(
-        notion,
-        "https://93.184.216.34/jobs/1",
-        prop_name_map={"Notes": "Job notes", "Source": "Origin"},
-    )
-
-    _, properties, _ = _create_call(notion)
-    assert properties["Notes"] == "Notes text"
-    assert properties["Source"] == "Company site"
 
 
 @pytest.mark.parametrize(
@@ -1185,49 +1149,17 @@ def test_build_create_properties_sets_source_from_url(url, expected_source):
     assert properties["Source"] == expected_source
 
 
-def test_load_prop_name_map_rejects_path_outside_working_directory(
-    tmp_path, monkeypatch
-):
-    monkeypatch.chdir(tmp_path)
-    outside_path = tmp_path.parent / "prop_map.json"
-    outside_path.write_text("{}", encoding="utf-8")
-
-    with pytest.raises(SystemExit):
-        main_mod._load_prop_name_map(str(outside_path))
-
-
-def test_load_prop_name_map_accepts_file_in_working_directory(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    prop_map_path = tmp_path / "prop_map.json"
-    prop_map_path.write_text('{"Company": "Firma"}', encoding="utf-8")
-
-    assert main_mod._load_prop_name_map("./prop_map.json") == {"Company": "Firma"}
-
-
-@pytest.mark.parametrize("content", ["[]", '{"Company": 1}', '{"Company": ["Firma"]}'])
-def test_load_prop_name_map_rejects_non_string_object_maps(
-    tmp_path, monkeypatch, content
-):
-    monkeypatch.chdir(tmp_path)
-    prop_map_path = tmp_path / "prop_map.json"
-    prop_map_path.write_text(content, encoding="utf-8")
-
-    with pytest.raises(SystemExit):
-        main_mod._load_prop_name_map("./prop_map.json")
-
-
-def test_run_create_calls_notion_with_default_mapping(monkeypatch):
+def test_run_create_calls_store_with_canonical_properties(monkeypatch):
     monkeypatch.setattr(
         main_mod,
         "_scrape_url",
         lambda url: {"url": url, "h1": "Data Engineer"},
     )
-    notion = FakeNotion()
+    store = FakeStore()
 
-    main_mod._run_create(notion, "https://93.184.216.34/jobs/2")
+    main_mod._run_create(store, "https://93.184.216.34/jobs/2")
 
-    database_id, properties, prop_name_map = _create_call(notion)
-    assert database_id == main_mod.get_database_id()
+    _, properties = _create_call(store)
     assert properties["Company"] == "93.184.216.34"
     assert properties["Role"] == "Data Engineer"
     assert properties["URL"] == "https://93.184.216.34/jobs/2"
@@ -1239,7 +1171,30 @@ def test_run_create_calls_notion_with_default_mapping(monkeypatch):
     assert "Last Update Date" not in properties
     assert "Update Details" not in properties
     assert "Tracked" not in properties
-    assert prop_name_map is None
+
+
+def test_run_create_reuses_existing_company_address(monkeypatch):
+    monkeypatch.setattr(
+        main_mod,
+        "_scrape_url",
+        lambda url: {"url": url, "h1": "Data Engineer"},
+    )
+    store = FakeStore(pd.DataFrame({"Address": ["Reused Street 9"]}))
+
+    main_mod._run_create(store, "https://93.184.216.34/jobs/2", company_override="Acme")
+
+    _, properties = _create_call(store)
+    assert properties["Address"] == "Reused Street 9"
+
+
+def test_run_create_forces_stage_applied(monkeypatch):
+    monkeypatch.setattr(
+        main_mod, "_scrape_url", lambda url: {"url": url, "h1": "Dev"}
+    )
+    store = FakeStore()
+    main_mod._run_create(store, "https://93.184.216.34/jobs/9")
+    _, properties = _create_call(store)
+    assert properties["Stage"] == "Applied"
 
 
 def test_create_driver_builds_driver_and_wait(monkeypatch):
@@ -1269,15 +1224,16 @@ def test_create_driver_builds_driver_and_wait(monkeypatch):
 
 def test_main_dispatches_modes(monkeypatch):
     calls = []
-    monkeypatch.setattr(main_mod, "NotionHelper", lambda api_key: api_key)
+    monkeypatch.setattr(main_mod, "ApplicationStore", lambda: "store")
     monkeypatch.setattr(
-        main_mod, "_run_new_entries", lambda notion: calls.append(("new", notion))
+        main_mod, "_run_new_entries", lambda store: calls.append(("new", store))
     )
     monkeypatch.setattr(
         main_mod,
         "_run_update_rejections",
-        lambda notion: calls.append(("update", notion)),
+        lambda store: calls.append(("update", store)),
     )
+    monkeypatch.setattr(main_mod, "_run_list", lambda store: calls.append(("list", store)))
     monkeypatch.setattr(main_mod.sys, "argv", ["prog", "new"])
 
     main_mod.main()
@@ -1287,9 +1243,39 @@ def test_main_dispatches_modes(monkeypatch):
     main_mod.main()
     assert calls[1][0] == "update"
 
+    monkeypatch.setattr(main_mod.sys, "argv", ["prog", "list"])
+    main_mod.main()
+    assert calls[2][0] == "list"
+
     monkeypatch.setattr(main_mod.sys, "argv", ["prog", "invalid"])
     with pytest.raises(SystemExit):
         main_mod.main()
+
+
+def test_run_list_empty_and_populated(capsys):
+    empty = FakeStore(pd.DataFrame())
+    main_mod._run_list(empty)
+    assert "No applications tracked yet" in capsys.readouterr().out
+
+    populated = FakeStore(
+        pd.DataFrame(
+            [
+                {
+                    "Company": "Acme",
+                    "Role": "Engineer",
+                    "Stage": "Applied",
+                    "Applied date": "2026-01-01",
+                    "Source": "Company site",
+                    "URL": "https://example.com/job",
+                }
+            ]
+        )
+    )
+    main_mod._run_list(populated)
+    out = capsys.readouterr().out
+    assert "1 tracked application(s)" in out
+    assert "Acme" in out
+    assert "Engineer" in out
 
 
 def test_run_new_entries_handles_empty_and_error(monkeypatch):

@@ -35,12 +35,12 @@ run = "uv sync"
 
 [tasks.new]
 description = "Run the main script for 'new' entries"
-run = "uv run -m selenium_notion_autofill new"
+run = "uv run -m jobroom_helper new"
 alias = ["n"]
 
 [tasks.update]
 description = "Run the main script for 'update-rejections' entries"
-run = "uv run -m selenium_notion_autofill update-rejections"
+run = "uv run -m jobroom_helper update-rejections"
 alias = ["u"]
 
 [tasks.add]
@@ -48,9 +48,14 @@ description = "Add a new dependency"
 run = "uv add {args}"
 
 [tasks.create]
-description = "Create a new Notion entry from a URL"
-run = "uv run -m selenium_notion_autofill create"
+description = "Create a new tracker entry from a URL"
+run = "uv run -m jobroom_helper create"
 alias = ["c"]
+
+[tasks.list]
+description = "List all tracked applications"
+run = "uv run -m jobroom_helper list"
+alias = ["l"]
 
 [tasks.update-deps]
 description = "Update dependencies"

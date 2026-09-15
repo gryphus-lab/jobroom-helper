@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Notion → Selenium Autofill Script - Main entry point."""
+"""Job-Room Autofill Script - Main entry point.
+
+Reads job-application records from a local SQLite database and uses Selenium
+to fill the Job-Room work-effort form.
+"""
 
 import argparse
 import ast
@@ -13,7 +17,6 @@ import sys
 import traceback
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
-from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 import httpcore
@@ -25,15 +28,11 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 
-from selenium_notion_autofill.config import (
+from jobroom_helper.config import (
     APPLIED_DATE,
     EXIT_MESSAGE,
     FIELD_SELECTORS,
-    NOTION_PROPERTY_MAP,
-    get_database_id,
-    get_notion_api_key,
     is_browser_fallback_enabled,
-    validate_property_map,
 )
 
 try:
@@ -42,9 +41,8 @@ except Exception:  # pragma: no cover - optional dependency
     ChromeDriverManager = None
     import shutil
 
-from selenium_notion_autofill.utils import NotionHelper
-from selenium_notion_autofill.utils.notion_helper import build_notion_properties
-from selenium_notion_autofill.utils.selenium_helper import (
+from jobroom_helper.utils import ApplicationStore
+from jobroom_helper.utils.selenium_helper import (
     handle_login,
     process_records,
     update_rejected_records,
@@ -54,7 +52,7 @@ LAST_UPDATE_DATE = "Last Update Date"
 UPDATE_DETAILS = "Update Details"
 MAX_DOCUMENT_BYTES = 5 * 1024 * 1024
 MAX_REDIRECTS = 5
-NOTION_RICH_TEXT_LIMIT = 2000
+TEXT_FIELD_LIMIT = 2000
 BLOCKED_PAGE_MESSAGE = "The website returned an access-blocked page"
 BLOCKED_HEADING_MARKERS = ("access denied", "captcha", "unusual traffic", "robot check")
 BLOCKED_TEXT_MARKERS = ("access denied", "unusual traffic", "robot check")
@@ -141,7 +139,7 @@ def get_month_filter():
     """Get filter for untracked records in the current open NpA period.
 
     Returns:
-        Dictionary with Notion filter criteria
+        Dictionary with the tracker filter criteria
     """
     start_date, end_date = _get_open_period()
 
@@ -218,54 +216,33 @@ def _create_driver():
 
 
 CREATE_USAGE = (
-    "uv run -m selenium_notion_autofill create <url> [--dry-run] "
-    "[--prop-map=path] [--company=NAME] [--role=TITLE]"
+    "uv run -m jobroom_helper create <url> [--dry-run] [--company=NAME] [--role=TITLE]"
 )
 
 
 def _create_arg_parser() -> argparse.ArgumentParser:
     """Build and return the argument parser for the create subcommand."""
-    parser = argparse.ArgumentParser(prog="uv run -m selenium_notion_autofill create")
+    parser = argparse.ArgumentParser(prog="uv run -m jobroom_helper create")
     parser.add_argument("url")
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--prop-map")
     parser.add_argument("--company", dest="company_override")
     parser.add_argument("--role", dest="role_override")
     return parser
 
 
-def _load_prop_name_map(prop_map: str | None) -> dict[str, str] | None:
-    if not prop_map:
-        return None
-
-    try:
-        base_dir = Path.cwd().resolve()
-        prop_map_path = Path(prop_map).resolve()
-        if not prop_map_path.is_relative_to(base_dir):
-            raise ValueError("path must be inside the current working directory")
-
-        with prop_map_path.open("r", encoding="utf-8") as fh:
-            parsed_map = json.load(fh)
-        return validate_property_map(parsed_map)
-    except Exception as exc:
-        print(f"Could not load prop-map file {prop_map}: {exc}")
-        sys.exit(1)
-
-
-def _run_create_from_args(notion, args: list[str]) -> None:
+def _run_create_from_args(store, args: list[str]) -> None:
     """Parse create subcommand arguments and invoke the create operation."""
     if not args:
         print(f"Usage: {CREATE_USAGE}")
         sys.exit(1)
 
     parsed_args = _create_arg_parser().parse_args(args)
-    if not parsed_args.dry_run:
-        notion = NotionHelper(get_notion_api_key())
+    if store is None:
+        store = ApplicationStore()
     _run_create(
-        notion,
+        store,
         parsed_args.url,
         dry_run=parsed_args.dry_run,
-        prop_name_map=_load_prop_name_map(parsed_args.prop_map),
         company_override=parsed_args.company_override,
         role_override=parsed_args.role_override,
     )
@@ -276,32 +253,51 @@ def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "new"
 
     if mode == "update-rejections":
-        _run_update_rejections(NotionHelper(get_notion_api_key()))
+        _run_update_rejections(ApplicationStore())
     elif mode == "new":
-        _run_new_entries(NotionHelper(get_notion_api_key()))
+        _run_new_entries(ApplicationStore())
     elif mode == "create":
         _run_create_from_args(None, sys.argv[2:])
+    elif mode == "list":
+        _run_list(ApplicationStore())
     else:
         print(f"Unknown mode: {mode}")
-        print(
-            "Usage: uv run -m selenium_notion_autofill [new|update-rejections|create]"
-        )
+        print("Usage: uv run -m jobroom_helper [new|update-rejections|create|list]")
         sys.exit(1)
 
 
-def _run_new_entries(notion):
+def _run_list(store):
+    """Print a readable table of all tracked applications from the DB."""
+    df = store.get_database_data()
+
+    if df is None or df.empty:
+        print("\n     ⚠️ No applications tracked yet.")
+        print("     Use 'create <url>' to add one.")
+        print(EXIT_MESSAGE)
+        return
+
+    columns = ["Company", "Role", "Stage", "Applied date", "Source", "URL"]
+    print(f"✅ {len(df)} tracked application(s):\n")
+    header = " | ".join(f"{col}" for col in columns)
+    print(header)
+    print("-" * len(header))
+    for _, row in df.iterrows():
+        print(" | ".join(str(row.get(col) or "") for col in columns))
+
+
+def _run_new_entries(store):
     """Process new untracked entries for the current month."""
     month_filter = get_month_filter()
-    df = notion.get_database_data(get_database_id(), filter=month_filter)
+    df = store.get_database_data(filter=month_filter)
 
     if df.empty:
         print("\n     ⚠️ No new records to process for this month. ")
-        print("     Please check your Notion database.")
+        print("     Please check your local database.")
         print("     Exiting...\n")
         return
 
     prepare_dataframe(df)
-    print(f"✅ Loaded {len(df)} new records from Notion")
+    print(f"✅ Loaded {len(df)} new records from the tracker")
 
     driver, wait = _create_driver()
 
@@ -309,7 +305,7 @@ def _run_new_entries(notion):
         print("🌐 Opening Job-Room...")
         handle_login(driver)
         print("\n🚀 Starting automation...")
-        process_records(driver, wait, df, notion)
+        process_records(driver, wait, df, store)
     except Exception as exc:
         print(f"❌ Error: {exc}")
         try:
@@ -912,14 +908,12 @@ def _resolve_company_name(
 _ALWAYS_KEEP_CREATE_FIELDS = ("Stage",)
 
 
-def _remove_unmapped_optional_properties(
-    properties: dict[str, object], final_map: dict[str, str] | None
-) -> None:
+def _remove_unmapped_optional_properties(properties: dict[str, object]) -> None:
     """Remove unconfigured optional properties in place, preserving required ones."""
     for field_name in OPTIONAL_CREATE_FIELDS:
         if field_name in _ALWAYS_KEEP_CREATE_FIELDS:
             continue
-        if field_name not in FIELD_SELECTORS and field_name not in (final_map or {}):
+        if field_name not in FIELD_SELECTORS:
             properties.pop(field_name, None)
 
 
@@ -961,67 +955,45 @@ def _build_create_properties(
 
 
 ADDRESS_FIELD = "Address"
-_TITLE_PROPERTY_NAMES = {"name", "title"}
 
 
-def _existing_company_address(
-    notion, company: str, final_map: dict | None
-) -> str | None:
+def _existing_company_address(store, company: str) -> str | None:
     """Return the first non-empty address for entries matching the company.
 
-    Property mappings are applied to the query and result column. Returns None
-    when the lookup cannot run, fails, has no matches, or finds no address.
+    Returns None when the lookup cannot run, fails, has no matches, or finds
+    no address.
     """
-    if notion is None or not company or not company.strip():
+    if store is None or not company or not company.strip():
         return None
-    company_prop = _actual_prop("Company", final_map)
-    address_prop = _actual_prop(ADDRESS_FIELD, final_map)
-    text_filter = (
-        "title" if company_prop.casefold() in _TITLE_PROPERTY_NAMES else "rich_text"
-    )
     try:
-        df = notion.get_database_data(
-            get_database_id(),
-            filter={"property": company_prop, text_filter: {"equals": company}},
+        df = store.get_database_data(
+            filter={"property": "Company", "rich_text": {"equals": company}},
         )
     except Exception as exc:  # noqa: BLE001 - lookup is best-effort
         print(f"   ⚠️  Could not look up existing address for {company}: {exc}")
         return None
-    if df is None or df.empty or address_prop not in df.columns:
+    if df is None or df.empty or ADDRESS_FIELD not in df.columns:
         return None
-    for value in df[address_prop]:
+    for value in df[ADDRESS_FIELD]:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
 
 
 def _apply_existing_company_address(
-    notion, properties: dict[str, object], company: str, final_map: dict | None
+    store, properties: dict[str, object], company: str
 ) -> None:
     """Add a known company address to properties in place when one is found."""
-    address = _existing_company_address(notion, company, final_map)
+    address = _existing_company_address(store, company)
     if address:
         properties[ADDRESS_FIELD] = address
         print(f"   📍 Reused address for {company}: {address}")
 
 
-def _actual_prop(canonical: str, final_map: dict | None) -> str:
-    """Return a mapped property name, falling back to its canonical name."""
-    if isinstance(final_map, dict):
-        return final_map.get(canonical, canonical)
-    return canonical
-
-
 def _truncate_optional_text(value: object) -> str | None:
     if isinstance(value, str) and value:
-        return value[:NOTION_RICH_TEXT_LIMIT]
+        return value[:TEXT_FIELD_LIMIT]
     return None
-
-
-def _build_dry_run_payload(
-    properties: dict[str, object], final_map: dict[str, str] | None
-) -> dict:
-    return build_notion_properties(properties, final_map)
 
 
 def _log_scraped_values(url: str, scraped: dict) -> None:
@@ -1047,39 +1019,25 @@ def _escape_terminal_controls(value: str) -> str:
 
 
 def _log_prepared_properties(properties: dict[str, object]) -> None:
-    print("📝 Values prepared for Notion:")
+    print("📝 Values prepared for the tracker:")
     for key, value in properties.items():
         if isinstance(value, str):
             value = f"[length={len(value)}, preview={_scraped_text_preview(value)}]"
         print(f"   {key}: {value}")
 
 
-def _resolve_property_map(prop_name_map: dict | None) -> dict | None:
-    selected_map = prop_name_map if prop_name_map else NOTION_PROPERTY_MAP
-    return validate_property_map(selected_map) if selected_map else None
-
-
-def _create_notion_page(notion, properties: dict[str, object], final_map: dict | None):
-    if final_map:
-        return notion.create_page(
-            get_database_id(), properties, prop_name_map=final_map
-        )
-    return notion.create_page(get_database_id(), properties)
-
-
 def _run_create(
-    notion,
+    store,
     url: str,
     dry_run: bool = False,
-    prop_name_map: dict | None = None,
     company_override: str | None = None,
     role_override: str | None = None,
 ):
-    """Create a Notion job-application page from metadata scraped from a URL.
+    """Create a job-application entry from metadata scraped from a URL.
 
-    A dry run prints the mapped payload without making Notion API calls. For a
-    real creation, a known address for the resolved company is reused when
-    available.
+    A dry run prints the canonical properties that would be inserted without
+    touching the database. For a real creation, a known address for the
+    resolved company is reused when available.
 
     Raises:
         SystemExit: If the URL cannot be scraped safely, is blocked, or creation fails.
@@ -1092,10 +1050,8 @@ def _run_create(
 
     _log_scraped_values(url, scraped)
     if scraped.get("blocked"):
-        print(f"❌ Notion entry was not created: {scraped['blocked']}")
+        print(f"❌ Entry was not created: {scraped['blocked']}")
         sys.exit(1)
-
-    final_map = _resolve_property_map(prop_name_map)
 
     parsed = urlparse(url)
     hostname = parsed.hostname or parsed.netloc or url
@@ -1103,27 +1059,26 @@ def _run_create(
     title = role_override or scraped.get("h1") or scraped.get("title") or hostname
     company = _resolve_company_name(hostname, company_override, scraped.get("company"))
     properties = _build_create_properties(url, scraped, company, title)
-    _remove_unmapped_optional_properties(properties, final_map)
-    # Dry-run must not touch the Notion API; only look up a reusable address for
+    _remove_unmapped_optional_properties(properties)
+    # Dry-run must not touch the database; only look up a reusable address for
     # a real create.
     if not dry_run:
-        _apply_existing_company_address(notion, properties, company, final_map)
+        _apply_existing_company_address(store, properties, company)
 
     _log_prepared_properties(properties)
 
     if dry_run:
-        notion_payload = _build_dry_run_payload(properties, final_map)
-        print("--- Dry run: Notion payload to create ---")
-        print(notion_payload)
-        print("--- End payload ---")
+        print("--- Dry run: properties to insert ---")
+        print(properties)
+        print("--- End properties ---")
         return
 
-    page_id = _create_notion_page(notion, properties, final_map)
+    page_id = store.create_page(properties=properties)
 
     if page_id:
-        print(f"✅ Created Notion entry for {url} -> {page_id}")
+        print(f"✅ Created tracker entry for {url} -> {page_id}")
     else:
-        print(f"❌ Failed to create Notion entry for {url}")
+        print(f"❌ Failed to create tracker entry for {url}")
         sys.exit(1)
 
 
@@ -1145,12 +1100,12 @@ def _print_rejected_records(df: pd.DataFrame) -> None:
         print(f"   • {company} - {role} (rejected: {update_date})")
 
 
-def _process_rejected_records(driver, wait, df, notion) -> None:
+def _process_rejected_records(driver, wait, df, store) -> None:
     try:
         print("\n🌐 Opening Job-Room...")
         handle_login(driver)
         print("\n🔄 Updating rejected entries...")
-        update_rejected_records(driver, wait, df, notion)
+        update_rejected_records(driver, wait, df, store)
     except Exception as exc:
         print(f"❌ Error: {exc}")
         try:
@@ -1163,10 +1118,10 @@ def _process_rejected_records(driver, wait, df, notion) -> None:
         driver.quit()
 
 
-def _run_update_rejections(notion):
+def _run_update_rejections(store):
     """Update existing entries that have been rejected since submission."""
     rejected_filter = get_rejected_filter()
-    df = notion.get_database_data(get_database_id(), filter=rejected_filter)
+    df = store.get_database_data(filter=rejected_filter)
 
     if df.empty:
         print("\n     ⚠️ No rejected records to update for this month.")
@@ -1178,14 +1133,14 @@ def _run_update_rejections(notion):
 
     if df.empty:
         print("\n     ⚠️ Rejected records found but none have Update Details.")
-        print("     Please add rejection reasons in Notion first.")
+        print("     Please add rejection reasons in the tracker first.")
         print(EXIT_MESSAGE)
         return
 
     _print_rejected_records(df)
 
     driver, wait = _create_driver()
-    _process_rejected_records(driver, wait, df, notion)
+    _process_rejected_records(driver, wait, df, store)
 
 
 if __name__ == "__main__":

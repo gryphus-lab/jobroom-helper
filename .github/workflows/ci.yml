@@ -30,8 +30,6 @@ jobs:
       - name: Run tests
         run: mise run test
         env:
-          NOTION_API_KEY: test_api_key
-          DATABASE_ID: test_database_id
           WEBSITE_URL: https://example.com/
 
       - name: SonarQube Scan
