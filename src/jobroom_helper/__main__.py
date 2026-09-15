@@ -991,6 +991,7 @@ def _apply_existing_company_address(
 
 
 def _truncate_optional_text(value: object) -> str | None:
+    """Return a bounded non-empty string, or None for unsupported values."""
     if isinstance(value, str) and value:
         return value[:TEXT_FIELD_LIMIT]
     return None
@@ -1019,6 +1020,7 @@ def _escape_terminal_controls(value: str) -> str:
 
 
 def _log_prepared_properties(properties: dict[str, object]) -> None:
+    """Log tracker properties while bounding and escaping string previews."""
     print("📝 Values prepared for the tracker:")
     for key, value in properties.items():
         if isinstance(value, str):
@@ -1101,6 +1103,7 @@ def _print_rejected_records(df: pd.DataFrame) -> None:
 
 
 def _process_rejected_records(driver, wait, df, store) -> None:
+    """Run the rejection update workflow and always close the browser."""
     try:
         print("\n🌐 Opening Job-Room...")
         handle_login(driver)

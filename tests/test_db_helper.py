@@ -13,6 +13,7 @@ def store(tmp_path):
 
 
 def _base_properties(**overrides):
+    """Build canonical application properties with optional overrides."""
     props = {
         "Company": "Acme",
         "Role": "Engineer",
@@ -30,6 +31,7 @@ def _base_properties(**overrides):
 
 
 def test_create_page_inserts_row_and_returns_id(store):
+    """Creating an application persists its fields and returns its row id."""
     row_id = store.create_page(properties=_base_properties())
 
     assert isinstance(row_id, str)
@@ -44,6 +46,7 @@ def test_create_page_inserts_row_and_returns_id(store):
 
 
 def test_create_page_dedups_on_duplicate_url(store, capsys):
+    """Repeated creates for one URL reuse the original application row."""
     first_id = store.create_page(properties=_base_properties())
     second_id = store.create_page(
         properties=_base_properties(Company="Acme Duplicate")
@@ -60,6 +63,7 @@ def test_create_page_dedups_on_duplicate_url(store, capsys):
 
 
 def test_get_database_data_returns_expected_columns(store):
+    """Database reads expose canonical columns in their declared order."""
     store.create_page(properties=_base_properties())
     df = store.get_database_data()
 
@@ -95,6 +99,7 @@ def test_get_database_data_returns_expected_columns(store):
 
 
 def test_get_database_data_empty_returns_columns(store):
+    """An empty database still returns the canonical DataFrame schema."""
     df = store.get_database_data()
     assert df.empty
     assert "Company" in df.columns
@@ -102,6 +107,7 @@ def test_get_database_data_empty_returns_columns(store):
 
 
 def test_get_database_data_filters_by_date_and_tracked(store):
+    """Combined date and tracking filters select only matching rows."""
     store.create_page(
         properties=_base_properties(
             URL="https://example.com/a", **{"Applied date": "2026-01-05"}
@@ -126,6 +132,7 @@ def test_get_database_data_filters_by_date_and_tracked(store):
 
 
 def test_get_database_data_filters_tracked_true(store):
+    """The tracked filter selects rows whose tracked flag is true."""
     row_id = store.create_page(properties=_base_properties())
     store.update_row(row_id, {"Tracked": {"checkbox": True}})
     store.create_page(properties=_base_properties(URL="https://example.com/untracked"))
@@ -138,6 +145,7 @@ def test_get_database_data_filters_tracked_true(store):
 
 
 def test_get_database_data_filters_stage_and_company(store):
+    """Status and rich-text filters map to their canonical columns."""
     store.create_page(
         properties=_base_properties(URL="https://example.com/r", Stage="Rejected")
     )
@@ -158,6 +166,7 @@ def test_get_database_data_filters_stage_and_company(store):
 
 
 def test_update_row_unwraps_checkbox_and_status(store):
+    """Row updates unwrap checkbox and status compatibility payloads."""
     row_id = store.create_page(properties=_base_properties())
 
     assert store.update_row(row_id, {"Tracked": {"checkbox": True}}) is True
@@ -171,6 +180,7 @@ def test_update_row_unwraps_checkbox_and_status(store):
 
 
 def test_update_row_accepts_plain_scalar(store):
+    """Row updates accept canonical scalar values without wrappers."""
     row_id = store.create_page(properties=_base_properties())
     assert store.update_row(row_id, {"Notes": "some note"}) is True
     df = store.get_database_data()
@@ -178,10 +188,12 @@ def test_update_row_accepts_plain_scalar(store):
 
 
 def test_update_row_missing_id_returns_false(store):
+    """Updating an unknown row id reports failure."""
     assert store.update_row("does-not-exist", {"Tracked": {"checkbox": True}}) is False
 
 
 def test_create_page_ignores_database_id_and_prop_name_map(store):
+    """Legacy compatibility arguments do not alter canonical storage."""
     row_id = store.create_page(
         database_id="ignored",
         properties=_base_properties(),
@@ -194,16 +206,19 @@ def test_create_page_ignores_database_id_and_prop_name_map(store):
 
 
 def test_get_db_path_default(monkeypatch):
+    """Database path configuration exposes its default value."""
     monkeypatch.delenv("JOBROOM_DB_PATH", raising=False)
     assert get_db_path() == "data/applications.db"
 
 
 def test_get_db_path_env(monkeypatch):
+    """Database path configuration exposes an environment override."""
     monkeypatch.setenv("JOBROOM_DB_PATH", "/tmp/custom.db")
     assert get_db_path() == "/tmp/custom.db"
 
 
 def test_default_db_path_uses_env(monkeypatch, tmp_path):
+    """A store without a path uses the environment and creates its parent."""
     target = tmp_path / "nested" / "apps.db"
     monkeypatch.setenv("JOBROOM_DB_PATH", str(target))
     store = ApplicationStore()
@@ -230,11 +245,14 @@ def test_default_db_path_uses_env(monkeypatch, tmp_path):
     ],
 )
 def test_unwrap_property(value, expected):
+    """Compatibility payload shapes unwrap to canonical scalar values."""
     assert unwrap_property(value) == expected
 
 
 def test_create_page_handles_failure(monkeypatch, store):
+    """Database connection failures make application creation return None."""
     def boom(*args, **kwargs):
+        """Raise a representative SQLite connection error."""
         raise __import__("sqlite3").Error("db is broken")
 
     monkeypatch.setattr(store, "_connect", boom)

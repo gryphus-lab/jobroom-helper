@@ -344,6 +344,7 @@ def test_fill_absagegrund_uses_fallback_if_no_inline_field(monkeypatch):
 
 
 def test_update_notion_tracked_prints_status(monkeypatch):
+    """Tracker updates print distinct success and failure messages."""
     printed = []
 
     class Notion:

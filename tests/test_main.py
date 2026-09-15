@@ -76,14 +76,17 @@ class FakeStore:
         self.calls = []
 
     def get_database_data(self, database_id=None, filter=None):
+        """Record a lookup and return an isolated copy of the fixture data."""
         self.calls.append(("get", filter))
         return self.df.copy()
 
     def update_row(self, page_id, properties):
+        """Record a successful tracker update."""
         self.calls.append(("update", page_id, properties))
         return True
 
     def create_page(self, database_id=None, properties=None, prop_name_map=None):
+        """Record a tracker create and return a stable fake id."""
         self.calls.append(("create", properties))
         return "new-page-id"
 
@@ -101,6 +104,7 @@ FakeNotion = FakeStore
 
 
 def test_existing_company_address_uses_company_filter():
+    """Existing-address lookups filter tracker rows by exact company name."""
     store = FakeStore(pd.DataFrame({"Address": ["Main Street 1"]}))
 
     address = main_mod._existing_company_address(store, "Acme")
@@ -729,6 +733,7 @@ def test_scrape_url_marks_403_and_429_blocked_regardless_of_content(monkeypatch)
 
 
 def test_run_create_does_not_create_page_for_blocked_scrape(monkeypatch, capsys):
+    """Blocked scrape results stop creation before the tracker is touched."""
     monkeypatch.setattr(
         main_mod,
         "_scrape_url",
@@ -1060,6 +1065,7 @@ def test_limited_response_stream_rejects_oversized_stream_without_content_length
 
 
 def test_run_create_dry_run_prints_canonical_properties(monkeypatch, capsys):
+    """Dry-run creation prints canonical values without writing a row."""
     monkeypatch.setattr(
         main_mod,
         "_scrape_url",
@@ -1100,6 +1106,7 @@ def test_run_create_dry_run_prints_canonical_properties(monkeypatch, capsys):
 
 
 def test_run_create_populates_zurich_fields(monkeypatch):
+    """Zurich job metadata maps to the expected canonical tracker fields."""
     monkeypatch.setattr(
         main_mod,
         "_scrape_url",
@@ -1150,6 +1157,7 @@ def test_build_create_properties_sets_source_from_url(url, expected_source):
 
 
 def test_run_create_calls_store_with_canonical_properties(monkeypatch):
+    """Creation passes canonical application properties to the store."""
     monkeypatch.setattr(
         main_mod,
         "_scrape_url",
@@ -1174,6 +1182,7 @@ def test_run_create_calls_store_with_canonical_properties(monkeypatch):
 
 
 def test_run_create_reuses_existing_company_address(monkeypatch):
+    """Creation reuses a non-empty address from an existing company row."""
     monkeypatch.setattr(
         main_mod,
         "_scrape_url",
@@ -1188,6 +1197,7 @@ def test_run_create_reuses_existing_company_address(monkeypatch):
 
 
 def test_run_create_forces_stage_applied(monkeypatch):
+    """Newly created applications always begin in the Applied stage."""
     monkeypatch.setattr(
         main_mod, "_scrape_url", lambda url: {"url": url, "h1": "Dev"}
     )
@@ -1223,6 +1233,7 @@ def test_create_driver_builds_driver_and_wait(monkeypatch):
 
 
 def test_main_dispatches_modes(monkeypatch):
+    """The CLI dispatches each supported mode and rejects unknown modes."""
     calls = []
     monkeypatch.setattr(main_mod, "ApplicationStore", lambda: "store")
     monkeypatch.setattr(
@@ -1253,6 +1264,7 @@ def test_main_dispatches_modes(monkeypatch):
 
 
 def test_run_list_empty_and_populated(capsys):
+    """List output handles both empty and populated tracker data."""
     empty = FakeStore(pd.DataFrame())
     main_mod._run_list(empty)
     assert "No applications tracked yet" in capsys.readouterr().out

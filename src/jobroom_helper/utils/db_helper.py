@@ -109,11 +109,13 @@ class ApplicationStore:
         self._create_table()
 
     def _connect(self) -> sqlite3.Connection:
+        """Open a connection that exposes result rows by column name."""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
 
     def _create_table(self) -> None:
+        """Create the applications table when the database is uninitialized."""
         column_defs = ",\n            ".join(
             f"{_quote(col)} TEXT" for col in _APPLICATION_COLUMNS if col != "URL"
         )
@@ -186,6 +188,7 @@ class ApplicationStore:
         return " AND ".join(clauses), params
 
     def _translate_condition(self, condition: Dict) -> tuple[str, list]:
+        """Translate one supported filter condition into SQL and parameters."""
         prop = condition.get("property")
         if not prop:
             return "", []
@@ -269,6 +272,7 @@ class ApplicationStore:
             return None
 
     def _find_id_by_url(self, url: str) -> Optional[str]:
+        """Return the application id associated with a URL, if one exists."""
         with self._connect() as conn:
             row = conn.execute(
                 'SELECT id FROM applications WHERE "URL" = ?', [url]

@@ -138,6 +138,7 @@ def fill_text(element, field_name, value):
 
 
 def _resolve_element(wait, field_name, selector, value, row=None):
+    """Resolve the appropriate form element, including special field types."""
     if field_name == "Interview" and row is not None:
         interview_value = str(get_notion_scalar_value(value)).strip().lower()
         if interview_value != "vorstellungsgespräch":
@@ -164,10 +165,12 @@ def _resolve_element(wait, field_name, selector, value, row=None):
 
 
 def _is_typeahead(selector):
+    """Return whether a selector identifies a typeahead input."""
     return "single-typeahead" in selector or "typeahead" in selector.lower()
 
 
 def _should_use_checkbox(field_name, selector):
+    """Return whether a field should use the checkbox interaction strategy."""
     return (
         "checkbox" in selector.lower()
         or field_name == "Type"
@@ -176,6 +179,7 @@ def _should_use_checkbox(field_name, selector):
 
 
 def _fill_with_strategy(driver, wait, field_name, selector, element, value):
+    """Fill an element using the interaction strategy implied by its field."""
     if _is_typeahead(selector):
         fill_typeahead(driver, wait, element, field_name, value)
     elif _should_use_checkbox(field_name, selector):
@@ -372,6 +376,7 @@ def _print_rejection_header(index, total, company, role, absagegrund):
 
 
 def _process_rejected_entry(driver, wait, store, row, index, total):
+    """Find and update one rejected application represented by a tracker row."""
     company = str(row.get("Company", ""))
     role = str(row.get("Role", ""))
     update_date = str(row.get("Last Update Date", ""))
@@ -406,6 +411,7 @@ def _report_missing_entry(driver, index, company):
 
 
 def _update_rejected_entry(driver, wait, store, row, company, absagegrund, entry):
+    """Apply rejection details and mark a confirmed tracker row as processed."""
     driver.execute_script(SCROLL_INTO_VIEW_SCRIPT, entry)
     time.sleep(1)
 
@@ -421,6 +427,7 @@ def _update_rejected_entry(driver, wait, store, row, company, absagegrund, entry
 
 
 def _update_notion_tracked(store, page_id):
+    """Mark a tracker row as processed and report whether the update succeeded."""
     success = store.update_row(
         page_id=page_id,
         properties={"Tracked": {"checkbox": True}},

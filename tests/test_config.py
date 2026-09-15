@@ -24,16 +24,19 @@ def test_config_import_does_not_require_notion_envs(monkeypatch):
 
 
 def test_get_db_path_default(monkeypatch):
+    """The database path falls back to the repository-local default."""
     monkeypatch.delenv("JOBROOM_DB_PATH", raising=False)
     assert get_db_path() == "data/applications.db"
 
 
 def test_get_db_path_env(monkeypatch):
+    """The database path honors the environment override."""
     monkeypatch.setenv("JOBROOM_DB_PATH", "/tmp/db.sqlite")
     assert get_db_path() == "/tmp/db.sqlite"
 
 
 def test_get_website_url_requires_setting(monkeypatch):
+    """Website URL access succeeds only while the setting is present."""
     monkeypatch.setenv("WEBSITE_URL", "https://example.com")
     assert get_website_url() == "https://example.com"
 
@@ -47,6 +50,7 @@ def test_get_website_url_requires_setting(monkeypatch):
     [("1", True), ("true", True), ("YES", True), ("", False), ("no", False)],
 )
 def test_is_browser_fallback_enabled(monkeypatch, value, expected):
+    """Browser fallback recognizes common truthy values case-insensitively."""
     monkeypatch.setenv("ENABLE_BROWSER_FALLBACK", value)
     assert is_browser_fallback_enabled() is expected
 
