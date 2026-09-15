@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A single-run CLI that pulls job-application records from a local SQLite database and uses Selenium to fill the work-effort ("Efforts to find work") form on https://www.job-room.ch. It is **interactive by design**: it pauses for manual login (AGOV + QR scan), and pauses again before submitting each form so the user can review the filled fields. It is not headless and not unattended.
+A single-run CLI that pulls job-application records from a local SQLite database and uses Selenium to fill the work-effort ("Efforts to find work") form on <https://www.job-room.ch>. It is **interactive by design**: it pauses for manual login (AGOV + QR scan), and pauses again before submitting each form so the user can review the filled fields. It is not headless and not unattended.
 
 ## Commands
 
