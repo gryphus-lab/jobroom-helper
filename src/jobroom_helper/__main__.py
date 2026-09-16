@@ -181,7 +181,15 @@ def prepare_dataframe(df):
     if "Type" in df.columns:
         df["Type"] = df["Type"].apply(extract_formatted_field)
 
-    df["PLZ_Ort"] = df["PLZ_Ort"].astype(str).str[:4]
+    # Keep the 4-digit PLZ for the typeahead, but leave blanks blank – otherwise
+    # an empty value becomes "nan" and the typeahead fuzzy-matches a bogus Ort.
+    def _plz_prefix(value):
+        text = "" if value is None else str(value).strip()
+        if text.lower() in {"", "nan", "none"}:
+            return ""
+        return text[:4]
+
+    df["PLZ_Ort"] = df["PLZ_Ort"].apply(_plz_prefix)
     df["RAV"] = "false"
     df["Arbeitspensum"] = "false"
     df["Status"] = "false"

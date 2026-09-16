@@ -1601,3 +1601,20 @@ def test_run_update_rejections_handles_screenshot_failure(monkeypatch):
         for item in args
         if isinstance(item, str)
     )
+
+
+def test_prepare_dataframe_blank_plz_stays_blank():
+    """A missing PLZ_Ort must stay blank, not become 'nan' (bogus typeahead)."""
+    df = pd.DataFrame(
+        [
+            {
+                "Date": "2026-09-16",
+                "Type": "electronic",
+                "PLZ_Ort": None,
+            }
+        ]
+    )
+
+    main_mod.prepare_dataframe(df)
+
+    assert df["PLZ_Ort"].iloc[0] == ""
