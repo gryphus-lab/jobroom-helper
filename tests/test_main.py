@@ -251,7 +251,7 @@ def test_prepare_dataframe_transforms_columns():
 
     main_mod.prepare_dataframe(df)
 
-    assert df["Date"].iloc[0] == "2024-01-01"
+    assert df["Date"].iloc[0] == "01.01.2024"
     assert df["Type"].iloc[0] == "electronic"
     assert df["PLZ_Ort"].iloc[0] == "1234"
     assert df["RAV"].iloc[0] == "false"
@@ -1412,7 +1412,7 @@ def test_prepare_dataframe_with_missing_columns():
     main_mod.prepare_dataframe(df)
 
     assert df["PLZ_Ort"].iloc[0] == "1234"
-    assert pd.isna(df["Date"].iloc[0])
+    assert df["Date"].iloc[0] == ""
     assert df["RAV"].iloc[0] == "false"
     assert df["Arbeitspensum"].iloc[0] == "false"
     assert df["Status"].iloc[0] == "false"
@@ -1601,3 +1601,41 @@ def test_run_update_rejections_handles_screenshot_failure(monkeypatch):
         for item in args
         if isinstance(item, str)
     )
+
+
+@pytest.mark.parametrize("missing_value", [None, pd.NA])
+def test_prepare_dataframe_blank_plz_stays_blank(missing_value):
+    """A missing PLZ_Ort must stay blank, not become 'nan' (bogus typeahead)."""
+    df = pd.DataFrame(
+        [
+            {
+                "Date": "2026-09-16",
+                "Type": "electronic",
+                "PLZ_Ort": missing_value,
+            }
+        ]
+    )
+
+    main_mod.prepare_dataframe(df)
+
+    assert df["PLZ_Ort"].iloc[0] == ""
+
+
+def test_to_swiss_date_formats_iso_and_handles_edge_cases():
+    """ISO dates become TT.MM.JJJJ; blanks/unparseable pass through safely."""
+    assert main_mod._to_swiss_date("2026-09-16") == "16.09.2026"
+    assert main_mod._to_swiss_date("2024-01-01") == "01.01.2024"
+    assert main_mod._to_swiss_date("") == ""
+    assert main_mod._to_swiss_date(None) == ""
+    assert main_mod._to_swiss_date(pd.NaT) == ""
+    assert main_mod._to_swiss_date(pd.NA) == ""
+    assert main_mod._to_swiss_date("nan") == ""
+    # already Swiss / unparseable → returned unchanged (no crash)
+    assert main_mod._to_swiss_date("16.09.2026") == "16.09.2026"
+
+
+def test_prepare_dataframe_date_is_swiss_format():
+    """prepare_dataframe must emit the Date column as TT.MM.JJJJ for the form."""
+    df = pd.DataFrame([{"Date": "2026-09-16", "Type": "electronic", "PLZ_Ort": ""}])
+    main_mod.prepare_dataframe(df)
+    assert df["Date"].iloc[0] == "16.09.2026"

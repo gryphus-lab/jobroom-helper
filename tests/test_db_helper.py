@@ -275,3 +275,13 @@ def test_create_page_handles_failure(monkeypatch, store):
 
     monkeypatch.setattr(store, "_connect", boom)
     assert store.create_page(properties=_base_properties()) is None
+
+
+def test_get_database_data_unset_columns_are_empty_strings(store):
+    """Unset columns must come back as '' (not NaN) so the form filler skips them."""
+    store.create_page(properties=_base_properties())
+    df = store.get_database_data()
+    row = df.iloc[0]
+    for col in ("Street", "Number", "POBox", "Contact", "Email", "Phone"):
+        assert row[col] == "", f"{col} should be empty string, got {row[col]!r}"
+        assert not (isinstance(row[col], float)), f"{col} leaked a NaN"

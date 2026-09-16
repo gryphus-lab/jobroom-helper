@@ -137,6 +137,19 @@ def fill_text(element, field_name, value):
     print(f"   ✓ Filled {field_name} → {value}")
 
 
+def _is_empty_value(value):
+    """Return whether a scraped value is effectively empty (blank/NULL/NaN)."""
+    if value is None:
+        return True
+    try:
+        # Catches float("nan") coming from a pandas NULL.
+        if isinstance(value, float) and value != value:
+            return True
+    except TypeError:
+        pass
+    return str(value).strip().lower() in {"", "nan", "none"}
+
+
 def _resolve_element(wait, field_name, selector, value, row=None):
     """Resolve the appropriate form element, including special field types."""
     if field_name == "Interview" and row is not None:
@@ -201,6 +214,18 @@ def fill_field(driver, wait, field_name, selector, value, row=None):
         value: Value to fill
         row: Optional row data for context
     """
+    # Text and typeahead inputs must stay blank when there is no value – typing
+    # "nan" or fuzzy-matching a blank PLZ to a random Ort corrupts the entry.
+    # Radio/checkbox/Type/Interview fields are driven by fixed flags, not text,
+    # so they are exempt from this skip.
+    if (
+        _is_empty_value(value)
+        and not _should_use_checkbox(field_name, selector)
+        and "radio" not in selector.lower()
+    ):
+        print(f"   → Skipping empty {field_name}")
+        return
+
     try:
         element = _resolve_element(wait, field_name, selector, value, row)
         if element is None:

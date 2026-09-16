@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from selenium.common.exceptions import TimeoutException
 
+from jobroom_helper.config import EXECUTE_SCRIPT_CLICK
 from jobroom_helper.utils import selenium_helper
 
 
@@ -1001,3 +1002,53 @@ def test_resolve_element_type_field_uses_css_for_plain_selector_v2(monkeypatch):
         assert locator[0] == selenium_helper.By.CSS_SELECTOR
     finally:
         selenium_helper.ec = original_ec
+
+
+def test_fill_field_skips_empty_text_value(monkeypatch):
+    """Empty text values must be skipped: no element resolved, nothing typed."""
+    resolved = {"called": False}
+
+    def fake_resolve(*args, **kwargs):
+        resolved["called"] = True
+        return object()
+
+    monkeypatch.setattr(selenium_helper, "_resolve_element", fake_resolve)
+
+    class Driver:
+        def execute_script(self, *args, **kwargs):
+            raise AssertionError("should not fill an empty field")
+
+    class Wait:
+        def until(self, arg):
+            raise AssertionError("should not resolve an empty field")
+
+    for empty in ("", "nan", "none", None, float("nan")):
+        selenium_helper.fill_field(Driver(), Wait(), "Street", "input.street", empty)
+
+    assert resolved["called"] is False
+
+
+def test_fill_field_empty_radio_still_processed():
+    """Radio fields carry fixed flags, not text, so they are not skipped."""
+    seen = {"resolved": False, "scripts": []}
+
+    class Elem:
+        pass
+
+    class Wait:
+        def until(self, arg):
+            seen["resolved"] = True
+            return Elem()
+
+    class Driver:
+        def execute_script(self, *args, **kwargs):
+            seen["scripts"].append(args[0])
+            return None
+
+    # value "false" is a flag for a radio selector – must NOT be skipped:
+    # the element is resolved and the radio is clicked via execute_script.
+    selenium_helper.fill_field(
+        Driver(), Wait(), "RAV", "label[for*='radio-button-']", "false"
+    )
+    assert seen["resolved"] is True
+    assert EXECUTE_SCRIPT_CLICK in seen["scripts"]

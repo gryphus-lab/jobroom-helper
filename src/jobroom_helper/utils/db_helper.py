@@ -158,8 +158,12 @@ class ApplicationStore:
         # Preserve the downstream column set/order; drop bookkeeping columns.
         for col in columns:
             if col not in df.columns:
-                df[col] = None
-        return df[columns]
+                df[col] = ""
+        df = df[columns]
+        # SQL NULLs become float NaN in pandas, which the Selenium form filler
+        # would stringify to the literal "nan". Normalise every missing value to
+        # an empty string so unset fields stay blank (and are skipped) downstream.
+        return df.where(df.notna(), "")
 
     def _build_where(self, filter: Optional[Dict]) -> tuple[str, list]:
         """Translate a supported Notion-style filter dict into SQL.
