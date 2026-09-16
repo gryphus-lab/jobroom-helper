@@ -1603,14 +1603,15 @@ def test_run_update_rejections_handles_screenshot_failure(monkeypatch):
     )
 
 
-def test_prepare_dataframe_blank_plz_stays_blank():
+@pytest.mark.parametrize("missing_value", [None, pd.NA])
+def test_prepare_dataframe_blank_plz_stays_blank(missing_value):
     """A missing PLZ_Ort must stay blank, not become 'nan' (bogus typeahead)."""
     df = pd.DataFrame(
         [
             {
                 "Date": "2026-09-16",
                 "Type": "electronic",
-                "PLZ_Ort": None,
+                "PLZ_Ort": missing_value,
             }
         ]
     )
@@ -1626,6 +1627,8 @@ def test_to_swiss_date_formats_iso_and_handles_edge_cases():
     assert main_mod._to_swiss_date("2024-01-01") == "01.01.2024"
     assert main_mod._to_swiss_date("") == ""
     assert main_mod._to_swiss_date(None) == ""
+    assert main_mod._to_swiss_date(pd.NaT) == ""
+    assert main_mod._to_swiss_date(pd.NA) == ""
     assert main_mod._to_swiss_date("nan") == ""
     # already Swiss / unparseable → returned unchanged (no crash)
     assert main_mod._to_swiss_date("16.09.2026") == "16.09.2026"

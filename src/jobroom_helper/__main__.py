@@ -176,7 +176,7 @@ def _to_swiss_date(value):
     Leaves blanks blank and passes through values that are already in Swiss
     format or otherwise unparseable, so it is safe to apply unconditionally.
     """
-    text = "" if value is None else str(value).strip()
+    text = "" if value is None or pd.isna(value) else str(value).strip()
     if text.lower() in {"", "nan", "none"}:
         return ""
     try:
@@ -199,7 +199,7 @@ def prepare_dataframe(df):
     # Keep the 4-digit PLZ for the typeahead, but leave blanks blank – otherwise
     # an empty value becomes "nan" and the typeahead fuzzy-matches a bogus Ort.
     def _plz_prefix(value):
-        text = "" if value is None else str(value).strip()
+        text = "" if value is None or pd.isna(value) else str(value).strip()
         if text.lower() in {"", "nan", "none"}:
             return ""
         return text[:4]
