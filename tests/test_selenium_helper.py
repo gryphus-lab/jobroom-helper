@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from selenium.common.exceptions import TimeoutException
 
+from jobroom_helper.config import EXECUTE_SCRIPT_CLICK
 from jobroom_helper.utils import selenium_helper
 
 
@@ -1029,7 +1030,7 @@ def test_fill_field_skips_empty_text_value(monkeypatch):
 
 def test_fill_field_empty_radio_still_processed():
     """Radio fields carry fixed flags, not text, so they are not skipped."""
-    seen = {"resolved": False, "scripts": 0}
+    seen = {"resolved": False, "scripts": []}
 
     class Elem:
         pass
@@ -1041,7 +1042,7 @@ def test_fill_field_empty_radio_still_processed():
 
     class Driver:
         def execute_script(self, *args, **kwargs):
-            seen["scripts"] += 1
+            seen["scripts"].append(args[0])
             return None
 
     # value "false" is a flag for a radio selector – must NOT be skipped:
@@ -1050,4 +1051,4 @@ def test_fill_field_empty_radio_still_processed():
         Driver(), Wait(), "RAV", "label[for*='radio-button-']", "false"
     )
     assert seen["resolved"] is True
-    assert seen["scripts"] >= 1
+    assert EXECUTE_SCRIPT_CLICK in seen["scripts"]
