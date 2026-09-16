@@ -170,6 +170,21 @@ def get_rejected_filter():
     }
 
 
+def _to_swiss_date(value):
+    """Format an ISO date (YYYY-MM-DD) as Swiss TT.MM.JJJJ for the Job-Room form.
+
+    Leaves blanks blank and passes through values that are already in Swiss
+    format or otherwise unparseable, so it is safe to apply unconditionally.
+    """
+    text = "" if value is None else str(value).strip()
+    if text.lower() in {"", "nan", "none"}:
+        return ""
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").strftime("%d.%m.%Y")
+    except ValueError:
+        return text
+
+
 def prepare_dataframe(df):
     """Prepare and transform dataframe for processing.
 
@@ -177,7 +192,7 @@ def prepare_dataframe(df):
         df: Dataframe to prepare
     """
     if "Date" in df.columns:
-        df["Date"] = df["Date"].apply(extract_formatted_field)
+        df["Date"] = df["Date"].apply(extract_formatted_field).apply(_to_swiss_date)
     if "Type" in df.columns:
         df["Type"] = df["Type"].apply(extract_formatted_field)
 
