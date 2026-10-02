@@ -1,6 +1,6 @@
 -- =====================================================================
 -- fix_application_status_dryrun.sql  (READ-ONLY preview)
--- Shows exactly which rows the auto-flag (section 5) would set to Rejected,
+-- Lists Notes-based candidates for individual review (section 5),
 -- and the current Stage split. Run this BEFORE the write script.
 --   sqlite3 -column data/applications.db < scripts/fix_application_status_dryrun.sql
 -- =====================================================================
@@ -9,8 +9,9 @@
 SELECT Stage, COUNT(*) AS n FROM applications GROUP BY Stage;
 
 .print
-.print === Rows section-5 auto-flag WOULD mark Rejected (Notes say rejected, Stage still Applied, excl. DUPLICATE) ===
-SELECT substr("Applied date",1,10) AS d,
+.print === Notes candidates for individual review ONLY (no automatic status changes) ===
+SELECT id, URL,
+       substr("Applied date",1,10) AS d,
        substr(Company,1,28)        AS company,
        substr(Role,1,34)           AS role,
        substr(Notes,1,70)          AS note_snippet

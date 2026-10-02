@@ -217,6 +217,8 @@ class ApplicationStore:
     def create_page(
         self,
         properties: Optional[Dict[str, Any]] = None,
+        *,
+        return_existing: bool = True,
     ) -> Optional[str]:
         """Insert a new application row from canonical scalar properties.
 
@@ -225,9 +227,12 @@ class ApplicationStore:
 
         Args:
             properties: Canonical-key -> scalar value mapping.
+            return_existing: Return an existing ID for duplicate URLs. Set False
+                to return IDs only for rows created by this call.
 
         Returns:
-            The row id on success, or None on failure.
+            The row id on success, or None on failure or a duplicate when
+            return_existing is False.
         """
         properties = properties or {}
         url = properties.get("URL")
@@ -240,7 +245,7 @@ class ApplicationStore:
                         f"   ℹ️  Entry already exists for URL {url}; "
                         f"reusing existing id {existing_id[:8]}..."
                     )
-                    return existing_id
+                    return existing_id if return_existing else None
 
             row_id = uuid4().hex
             now = datetime.now(timezone.utc).isoformat()
@@ -268,7 +273,7 @@ class ApplicationStore:
                     row = conn.execute(
                         'SELECT id FROM applications WHERE "URL" = ?', [url]
                     ).fetchone()
-                    return row["id"] if row else None
+                    return row["id"] if row and return_existing else None
                 conn.commit()
             print(f"   ✅ Application row created (id: {row_id[:8]}...)")
             return row_id
