@@ -178,6 +178,7 @@ class Row:
     result: str = ""
     stage: str = "Applied"
     flags: List[str] = field(default_factory=list)
+    row_number: int = 0  # One-based position in the monthly source PDF.
 
 
 def iter_pdf_lines(path: str) -> List[str]:
@@ -191,15 +192,15 @@ def iter_pdf_lines(path: str) -> List[str]:
             "pymupdf is required to parse NpA PDFs. "
             "Install it with: pip install pymupdf"
         )
-    doc = pymupdf.open(path)
-    lines: List[str] = []
-    for page in doc:
-        raw_text = page.get_text("text")
-        if not isinstance(raw_text, str):
-            continue
-        for ln in raw_text.splitlines():
-            lines.append(ln.strip())
-    return lines
+    with pymupdf.open(path) as doc:
+        lines: List[str] = []
+        for page in doc:
+            raw_text = page.get_text("text")
+            if not isinstance(raw_text, str):
+                continue
+            for ln in raw_text.splitlines():
+                lines.append(ln.strip())
+        return lines
 
 
 def is_boilerplate(line: str) -> bool:
@@ -489,6 +490,7 @@ def rows_from_starts(month: str, lines: List[str], starts: List[int]) -> List[Ro
         end = starts[a + 1] if a + 1 < len(starts) else len(lines)
         row = parse_block(month, lines, start, end)
         if row:
+            row.row_number = a + 1
             rows.append(row)
     return rows
 
@@ -508,11 +510,17 @@ def parse_pdf(month: str, path: str) -> tuple[List[Row], int | None]:
 
 
 def build_url(r: Row) -> str:
-    """Build an npa:// deduplication key from date, company slug, and role slug.
+    """Identify a row within an unchanged monthly PDF.
 
-    The role slug is truncated to 40 characters, so distinct rows can share a key.
+    Legacy URLs without the source-row suffix need manual reconciliation before
+    reimporting into a database populated by an older version of this script.
     """
-    return f"npa://{r.applied_date}/{slug(r.company)}/{slug(r.role)[:40]}"
+    if r.row_number < 1:
+        raise ValueError("NpA URL requires a positive source row number")
+    return (
+        f"npa://{r.applied_date}/{slug(r.company)}/{slug(r.role)[:40]}"
+        f"/{r.month}-{r.row_number}"
+    )
 
 
 def load_rows(pdf_dir: str) -> tuple[List[Row], list[tuple[str, int | None, int]]]:
@@ -525,6 +533,9 @@ def load_rows(pdf_dir: str) -> tuple[List[Row], list[tuple[str, int | None, int]
     summary: list[tuple[str, int | None, int]] = []
     for month in MONTHS:
         path = os.path.join(pdf_dir, f"NpA_2026-{month}.pdf")
+        if not os.path.exists(path):
+            print(f"Skipping missing PDF: {path}", file=sys.stderr)
+            continue
         rows, hdr = parse_pdf(month, path)
         all_rows.extend(rows)
         summary.append((month, hdr, len(rows)))
@@ -551,7 +562,8 @@ def print_summary(summary: list[tuple[str, int | None, int]]) -> None:
         tot_hdr += hdr or 0
         tot_det += det
         delta = (hdr - det) if hdr is not None else None
-        print(f"  {MONTH_NAMES[month]:<16} header={hdr}  parsed={det}  delta={delta}")
+        label = MONTH_NAMES.get(month, month)
+        print(f"  {label:<16} header={hdr}  parsed={det}  delta={delta}")
     print(
         f"  {'TOTAL':<16} header={tot_hdr}  parsed={tot_det}  delta={tot_hdr - tot_det}"
     )
@@ -611,7 +623,7 @@ def insert_rows(all_rows: List[Row], db_path: str) -> int:
             "Date": r.applied_date,
             "Applied date": r.applied_date,
             "Stage": r.stage,
-            "Source": f"Job-Room (NpA {MONTH_NAMES[r.month]})",
+            "Source": f"Job-Room (NpA {MONTH_NAMES.get(r.month, r.month)})",
             "Notes": r.result,
             "Address": r.address,
         }
@@ -621,7 +633,7 @@ def insert_rows(all_rows: List[Row], db_path: str) -> int:
             props["Email"] = r.email
         if r.phone:
             props["Phone"] = r.phone
-        rid = store.create_page(properties=props)
+        rid = store.create_page(properties=props, return_existing=False)
         if rid:
             inserted += 1
     return inserted

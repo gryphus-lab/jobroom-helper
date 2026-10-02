@@ -18,11 +18,30 @@
 -- Edit the TEMPLATE blocks below with the real rejections/progressions, then run.
 -- =====================================================================
 
-BEGIN TRANSACTION;
+-- Stop the sqlite3 CLI on a failed assertion; never continue after a rollback.
+.bail on
+BEGIN IMMEDIATE;
+
+-- Replace NULL with the exact confirmed Detecon URL before running.
+-- The target must exist exactly once; an unset or ambiguous target rolls back.
+CREATE TEMP TABLE confirmed_detecon (url TEXT);
+INSERT INTO confirmed_detecon VALUES (NULL);
+CREATE TEMP TABLE status_assertion (
+    valid INTEGER CONSTRAINT expected_single_detecon_row CHECK (valid = 1)
+);
+INSERT OR ROLLBACK INTO status_assertion
+SELECT COUNT(*) = 1 FROM applications
+ WHERE URL = (SELECT url FROM confirmed_detecon);
+
+-- A rerun may change zero rows only when this exact target is already rejected.
+CREATE TEMP TABLE expected_detecon_changes AS
+SELECT COUNT(*) AS n FROM applications
+ WHERE URL = (SELECT url FROM confirmed_detecon)
+   AND Stage IS NOT 'Rejected';
 
 -- ---------------------------------------------------------------------
 -- 0) SAFETY: show what will change is up to you (run the SELECTs in the
---    companion dry-run file first). This script only writes.
+--    companion dry-run file first). Notes matches below are review-only.
 -- ---------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------
@@ -34,8 +53,10 @@ UPDATE applications
        "Last Update Date" = '2026-10-02',
        "Update Details" = TRIM(COALESCE("Update Details",'') || ' | 02.10.2026 rejection confirmed'),
        updated_at = datetime('now')
- WHERE Company LIKE 'Detecon%'
-   AND Stage <> 'Rejected';
+ WHERE URL = (SELECT url FROM confirmed_detecon)
+   AND Stage IS NOT 'Rejected';
+INSERT OR ROLLBACK INTO status_assertion
+SELECT changes() = (SELECT n FROM expected_detecon_changes);
 
 -- ---------------------------------------------------------------------
 -- 2) TEMPLATE — mark a specific application REJECTED by URL (preferred key)
@@ -74,16 +95,11 @@ UPDATE applications
 --    AND Stage <> 'Applied';
 
 -- ---------------------------------------------------------------------
--- 5) HYGIENE — auto-flag any row whose Notes clearly state a rejection
---    but Stage is still 'Applied'. Conservative keyword set (EN + DE).
---    The BCG duplicate note contains the word "DUPLICATE"/"no Absage" and
---    is explicitly EXCLUDED so it stays 'Applied' as it appears in the NpA.
+-- 5) REVIEW ONLY — Notes phrases are ambiguous and never change Stage.
+--    Verify each candidate individually, then use an exact-key template above.
 -- ---------------------------------------------------------------------
-UPDATE applications
-   SET Stage = 'Rejected',
-       "Last Update Date" = '2026-10-02',
-       "Update Details" = TRIM(COALESCE("Update Details",'') || ' | auto-set Rejected from Notes 2026-10-02'),
-       updated_at = datetime('now')
+SELECT id, URL, Company, Role, "Applied date", Stage, Notes
+  FROM applications
  WHERE Stage = 'Applied'
    AND lower(COALESCE(Notes,'')) NOT LIKE '%duplicate%'
    AND (
@@ -99,6 +115,9 @@ UPDATE applications
       OR lower(Notes) LIKE '%eine absage%'
    );
 
+DROP TABLE expected_detecon_changes;
+DROP TABLE status_assertion;
+DROP TABLE confirmed_detecon;
 COMMIT;
 
 -- ---------------------------------------------------------------------
