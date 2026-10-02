@@ -524,7 +524,8 @@ def load_rows(pdf_dir: str) -> tuple[List[Row], list[tuple[str, int | None, int]
     """Load NpA_2026-MM.pdf files from pdf_dir in configured MONTHS order.
 
     Return all rows and (month, header count or None, parsed count) summaries.
-    Missing files and other PDF reading or date conversion errors propagate.
+    Missing files are reported and skipped; PDF reading and date conversion
+    errors propagate.
     """
     all_rows: List[Row] = []
     summary: list[tuple[str, int | None, int]] = []
@@ -551,7 +552,7 @@ def print_summary(summary: list[tuple[str, int | None, int]]) -> None:
     """Print (month, header count, parsed count) summaries and totals.
 
     Unknown header counts appear as None and contribute zero to the total.
-    Raise KeyError for a month absent from MONTH_NAMES.
+    Months absent from MONTH_NAMES are displayed using their month value.
     """
     print("\n=== Count per month (header 'Anzahl Bewerbungen' vs parsed detail) ===")
     tot_hdr = tot_det = 0
@@ -598,8 +599,8 @@ def insert_rows(all_rows: List[Row], db_path: str) -> int:
     receiving an ID, including duplicates. Per-row SQLite errors are caught by
     the store and excluded from the count; processing continues.
 
-    Filesystem and SQLite initialization errors propagate. A month absent from
-    MONTH_NAMES raises KeyError; earlier inserts remain committed.
+    Filesystem and SQLite initialization errors propagate. Months absent from
+    MONTH_NAMES are used as-is in the source label.
     """
     sys.path.insert(
         0,
