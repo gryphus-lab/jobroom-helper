@@ -146,12 +146,17 @@ INTERVIEW_SIGNALS = [
 
 
 def strip_accents(s: str) -> str:
+    """Return NFKD-normalized text with combining marks removed."""
     return "".join(
         c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c)
     )
 
 
 def slug(s: str) -> str:
+    """Return an accent-stripped, lowercase ASCII slug, or ``x`` if empty.
+
+    Runs of non-alphanumeric characters become hyphens; edge hyphens are removed.
+    """
     s = strip_accents(s).lower()
     s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")
     return s or "x"
@@ -176,6 +181,11 @@ class Row:
 
 
 def iter_pdf_lines(path: str) -> List[str]:
+    """Read stripped lines in PDF extraction order, retaining empty lines.
+
+    Pages without string text are skipped. Raise RuntimeError if PyMuPDF is
+    unavailable; errors opening the file or extracting its text propagate.
+    """
     if pymupdf is None:
         raise RuntimeError(
             "pymupdf is required to parse NpA PDFs. "
@@ -193,6 +203,7 @@ def iter_pdf_lines(path: str) -> List[str]:
 
 
 def is_boilerplate(line: str) -> bool:
+    """Identify known NpA headers, footers, and saved markers case-sensitively."""
     if line in BOILERPLATE:
         return True
     if line.startswith("gespeichert"):
@@ -201,6 +212,10 @@ def is_boilerplate(line: str) -> bool:
 
 
 def find_row_starts(lines: List[str]) -> List[int]:
+    """Return indices of DD.MM.YYYY lines immediately followed by ``gespeichert``.
+
+    The marker is matched as a prefix; calendar dates are not validated.
+    """
     starts = []
     for i, ln in enumerate(lines):
         if (
@@ -213,12 +228,16 @@ def find_row_starts(lines: List[str]) -> List[int]:
 
 
 def iso_date(raw: str) -> str:
+    """Reorder DD.MM.YYYY text to YYYY-MM-DD without validating or padding it.
+
+    Raise ValueError unless the input has exactly three dot-separated parts.
+    """
     d, m, y = raw.split(".")
     return f"{y}-{m}-{d}"
 
 
 def looks_like_name(line: str) -> bool:
-    """A plausible person name: letters/spaces/dots/hyphens,
+    """A plausible person name: letters/spaces/dots/hyphens/apostrophes,
     1-4 tokens, no job keyword.
     """
     if "@" in line or PHONE_RE.match(line):
@@ -241,6 +260,13 @@ def looks_like_name(line: str) -> bool:
 def parse_company_and_address(
     blk: List[str], start_index: int, flags: List[str]
 ) -> tuple[str, str, int]:
+    """Read company and address fields from a block's zero-based start index.
+
+    Return the joined company, address, and first unconsumed index. Skip
+    boilerplate before the address; at most one likely locality continuation
+    is appended, adding ``address-wrapped`` to the supplied flags list.
+    Raise ValueError if no Swiss postal address marker is found.
+    """
     company_parts: List[str] = []
     addr_idx: Optional[int] = None
     j = start_index
@@ -300,6 +326,12 @@ def parse_company_and_address(
 def parse_contact_email_phone(
     blk: List[str], start_index: int, flags: List[str]
 ) -> tuple[str, str, str, int]:
+    """Read optional contact, email, and phone lines in that order.
+
+    Starting at the zero-based index, return the three fields (empty when
+    undetected) and the first unconsumed index. Contact detection is heuristic
+    and appends ``contact-detected`` to the supplied flags list.
+    """
     contact = ""
     email = ""
     phone = ""
@@ -324,6 +356,12 @@ def parse_contact_email_phone(
 
 
 def parse_role_and_result(blk: List[str], start_index: int) -> tuple[str, str, str]:
+    """Return joined role text, link, and result text from a zero-based index.
+
+    The role ends at the first ``http`` prefix or ``X`` checkbox marker.
+    Remaining text forms the result, excluding boilerplate and checkbox markers.
+    Undetected fields are empty strings.
+    """
     role_parts: List[str] = []
     m = start_index
     link = ""
@@ -358,6 +396,10 @@ def parse_role_and_result(blk: List[str], start_index: int) -> tuple[str, str, s
 
 
 def derive_stage(result: str) -> str:
+    """Infer a stage from case-insensitive signal substrings in result text.
+
+    Rejection takes precedence over interview signals; no match yields Applied.
+    """
     low = result.lower()
     if any(sig in low for sig in REJECT_SIGNALS):
         return "Rejected"
@@ -367,6 +409,13 @@ def derive_stage(result: str) -> str:
 
 
 def parse_block(month: str, lines: List[str], start: int, end: int) -> Optional[Row]:
+    """Parse ``lines[start:end]`` as one application labeled with ``month``.
+
+    Expect an application date, a saved marker, and an optional saved date
+    before the company fields. Return None for fewer than four lines or a
+    missing address marker. Missing company, role, or link fields are flagged
+    on the returned row. ValueError from application-date conversion propagates.
+    """
     blk = lines[start:end]
     if len(blk) < 4:
         return None
@@ -416,6 +465,10 @@ def parse_block(month: str, lines: List[str], start: int, end: int) -> Optional[
 
 
 def header_count_from_lines(lines: List[str]) -> int | None:
+    """Read the integer after the first ``Anzahl Bewerbungen`` header.
+
+    Return None if the header or following line is absent, or conversion fails.
+    """
     for i, ln in enumerate(lines):
         if ln == "Anzahl Bewerbungen" and i + 1 < len(lines):
             try:
@@ -426,6 +479,11 @@ def header_count_from_lines(lines: List[str]) -> int | None:
 
 
 def rows_from_starts(month: str, lines: List[str], starts: List[int]) -> List[Row]:
+    """Parse rows between ordered start indices, ending the last at EOF.
+
+    Label rows with ``month`` and omit blocks for which parse_block returns None.
+    Application-date conversion errors propagate.
+    """
     rows: List[Row] = []
     for a, start in enumerate(starts):
         end = starts[a + 1] if a + 1 < len(starts) else len(lines)
@@ -436,6 +494,12 @@ def rows_from_starts(month: str, lines: List[str], starts: List[int]) -> List[Ro
 
 
 def parse_pdf(month: str, path: str) -> tuple[List[Row], int | None]:
+    """Return parsed applications labeled with ``month`` and the PDF header count.
+
+    The count is None when absent or unparseable and need not match the number
+    of returned rows. Short blocks and blocks without addresses are skipped;
+    PDF reading and application-date conversion errors propagate.
+    """
     lines = iter_pdf_lines(path)
     header_count = header_count_from_lines(lines)
     starts = find_row_starts(lines)
@@ -444,10 +508,19 @@ def parse_pdf(month: str, path: str) -> tuple[List[Row], int | None]:
 
 
 def build_url(r: Row) -> str:
+    """Build an npa:// deduplication key from date, company slug, and role slug.
+
+    The role slug is truncated to 40 characters, so distinct rows can share a key.
+    """
     return f"npa://{r.applied_date}/{slug(r.company)}/{slug(r.role)[:40]}"
 
 
 def load_rows(pdf_dir: str) -> tuple[List[Row], list[tuple[str, int | None, int]]]:
+    """Load NpA_2026-MM.pdf files from pdf_dir in configured MONTHS order.
+
+    Return all rows and (month, header count or None, parsed count) summaries.
+    Missing files and other PDF reading or date conversion errors propagate.
+    """
     all_rows: List[Row] = []
     summary: list[tuple[str, int | None, int]] = []
     for month in MONTHS:
@@ -459,6 +532,7 @@ def load_rows(pdf_dir: str) -> tuple[List[Row], list[tuple[str, int | None, int]
 
 
 def print_parsed_rows(all_rows: List[Row]) -> None:
+    """Print dates and stages, limiting companies to 33 and roles to 43 characters."""
     print(f"{'date':<12} {'company':<34} {'role':<44} stage")
     print("-" * 110)
     for r in all_rows:
@@ -466,6 +540,11 @@ def print_parsed_rows(all_rows: List[Row]) -> None:
 
 
 def print_summary(summary: list[tuple[str, int | None, int]]) -> None:
+    """Print (month, header count, parsed count) summaries and totals.
+
+    Unknown header counts appear as None and contribute zero to the total.
+    Raise KeyError for a month absent from MONTH_NAMES.
+    """
     print("\n=== Count per month (header 'Anzahl Bewerbungen' vs parsed detail) ===")
     tot_hdr = tot_det = 0
     for month, hdr, det in summary:
@@ -479,6 +558,7 @@ def print_summary(summary: list[tuple[str, int | None, int]]) -> None:
 
 
 def print_stage_breakdown(all_rows: List[Row]) -> None:
+    """Print counts by stage in order of first occurrence."""
     print("\n=== Stage breakdown ===")
     from collections import Counter
 
@@ -488,6 +568,7 @@ def print_stage_breakdown(all_rows: List[Row]) -> None:
 
 
 def print_flagged_rows(all_rows: List[Row]) -> None:
+    """Print flagged applications and contact details, ignoring ``no-link`` flags."""
     print("\n=== Flagged rows (contact/address/uncertain) ===")
     for r in all_rows:
         interesting = [f for f in r.flags if f != "no-link"]
@@ -501,6 +582,16 @@ def print_flagged_rows(all_rows: List[Row]) -> None:
 
 
 def insert_rows(all_rows: List[Row], db_path: str) -> int:
+    """Persist rows to SQLite using generated npa:// URLs for deduplication.
+
+    Create the database and parent directories if needed. Existing URLs retain
+    their stored values and count toward the return value, which counts rows
+    receiving an ID, including duplicates. Per-row SQLite errors are caught by
+    the store and excluded from the count; processing continues.
+
+    Filesystem and SQLite initialization errors propagate. A month absent from
+    MONTH_NAMES raises KeyError; earlier inserts remain committed.
+    """
     sys.path.insert(
         0,
         os.path.join(
@@ -537,6 +628,13 @@ def insert_rows(all_rows: List[Row], db_path: str) -> int:
 
 
 def main():
+    """Parse CLI arguments and print NpA rows, counts, stages, and flags.
+
+    Require --pdf-dir and write to SQLite only with --write. The --db-path
+    default is JOBROOM_DB_PATH or data/applications.db. Argument parsing may
+    raise SystemExit; PDF parsing, summary, and store initialization errors
+    propagate.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--pdf-dir", required=True)
     ap.add_argument("--write", action="store_true")
