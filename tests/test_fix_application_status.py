@@ -42,7 +42,19 @@ def db():
 
 
 def configured_sql(url=TARGET_URL):
-    return SQL.replace("VALUES (NULL)", "VALUES ('" + url + "')")
+    expected = "INSERT INTO confirmed_detecon VALUES (NULL, NULL, NULL);"
+    assert expected in SQL
+    escaped_url = url.replace("'", "''")
+    replacement = (
+        "INSERT INTO confirmed_detecon VALUES "
+        f"('{escaped_url}', NULL, NULL);"
+    )
+    return SQL.replace(expected, replacement)
+
+
+def test_configured_sql_escapes_quotes_in_target_url():
+    sql = configured_sql("https://example.com/o'brien")
+    assert "VALUES ('https://example.com/o''brien', NULL, NULL);" in sql
 
 
 def test_only_confirmed_target_changes_and_rerun_is_idempotent(db):

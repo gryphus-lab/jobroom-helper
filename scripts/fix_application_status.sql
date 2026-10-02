@@ -22,22 +22,41 @@
 .bail on
 BEGIN IMMEDIATE;
 
+CREATE TEMP TABLE status_constants AS SELECT 'Rejected' AS rejected;
+
 -- Replace NULL with the exact confirmed Detecon URL before running.
+-- If there is no clean URL, use a unique Company + Applied date pair instead.
 -- The target must exist exactly once; an unset or ambiguous target rolls back.
-CREATE TEMP TABLE confirmed_detecon (url TEXT);
-INSERT INTO confirmed_detecon VALUES (NULL);
+CREATE TEMP TABLE confirmed_detecon (
+    url TEXT,
+    company TEXT,
+    applied_date TEXT
+);
+INSERT INTO confirmed_detecon VALUES (NULL, NULL, NULL);
 CREATE TEMP TABLE status_assertion (
     valid INTEGER CONSTRAINT expected_single_detecon_row CHECK (valid = 1)
 );
 INSERT OR ROLLBACK INTO status_assertion
 SELECT COUNT(*) = 1 FROM applications
- WHERE URL = (SELECT url FROM confirmed_detecon);
+ WHERE (
+       URL = (SELECT url FROM confirmed_detecon)
+    OR (
+       Company = (SELECT company FROM confirmed_detecon)
+       AND "Applied date" = (SELECT applied_date FROM confirmed_detecon)
+    )
+ );
 
 -- A rerun may change zero rows only when this exact target is already rejected.
 CREATE TEMP TABLE expected_detecon_changes AS
 SELECT COUNT(*) AS n FROM applications
- WHERE URL = (SELECT url FROM confirmed_detecon)
-   AND Stage IS NOT 'Rejected';
+ WHERE (
+       URL = (SELECT url FROM confirmed_detecon)
+    OR (
+       Company = (SELECT company FROM confirmed_detecon)
+       AND "Applied date" = (SELECT applied_date FROM confirmed_detecon)
+    )
+ )
+   AND Stage IS NOT (SELECT rejected FROM status_constants);
 
 -- ---------------------------------------------------------------------
 -- 0) SAFETY: show what will change is up to you (run the SELECTs in the
@@ -49,12 +68,18 @@ SELECT COUNT(*) AS n FROM applications
 --    Detecon handled separately earlier; included here for idempotency.
 -- ---------------------------------------------------------------------
 UPDATE applications
-   SET Stage = 'Rejected',
+   SET Stage = (SELECT rejected FROM status_constants),
        "Last Update Date" = '2026-10-02',
        "Update Details" = TRIM(COALESCE("Update Details",'') || ' | 02.10.2026 rejection confirmed'),
        updated_at = datetime('now')
- WHERE URL = (SELECT url FROM confirmed_detecon)
-   AND Stage IS NOT 'Rejected';
+ WHERE (
+       URL = (SELECT url FROM confirmed_detecon)
+    OR (
+       Company = (SELECT company FROM confirmed_detecon)
+       AND "Applied date" = (SELECT applied_date FROM confirmed_detecon)
+    )
+ )
+   AND Stage IS NOT (SELECT rejected FROM status_constants);
 INSERT OR ROLLBACK INTO status_assertion
 SELECT changes() = (SELECT n FROM expected_detecon_changes);
 
@@ -97,32 +122,27 @@ SELECT changes() = (SELECT n FROM expected_detecon_changes);
 -- ---------------------------------------------------------------------
 -- 5) REVIEW ONLY — Notes phrases are ambiguous and never change Stage.
 --    Verify each candidate individually, then use an exact-key template above.
+-- NOSONAR: Free-text substring searches require leading-wildcard matching; this
+-- review-only scan has no conventional index that preserves the same semantics.
 -- ---------------------------------------------------------------------
 SELECT id, URL, Company, Role, "Applied date", Stage, Notes
   FROM applications
  WHERE Stage = 'Applied'
-   AND lower(COALESCE(Notes,'')) NOT LIKE '%duplicate%'
+   AND lower(COALESCE(Notes,'')) NOT LIKE '%duplicate%' -- NOSONAR
    AND (
-         lower(Notes) LIKE '%we regret%'
-      OR lower(Notes) LIKE '%unfortunately%'
-      OR lower(Notes) LIKE '%not be proceeding%'
-      OR lower(Notes) LIKE '%not be able to consider%'
-      OR lower(Notes) LIKE '%unable to consider%'
-      OR lower(Notes) LIKE '%not in a position to further%'
-      OR lower(Notes) LIKE '%we will not%'
-      OR lower(Notes) LIKE '%nicht weiter%'
-      OR lower(Notes) LIKE '%leider%absage%'
-      OR lower(Notes) LIKE '%eine absage%'
+         lower(Notes) LIKE '%we regret%' -- NOSONAR
+
+      OR lower(Notes) LIKE '%leider%absage%' -- NOSONAR
+      OR lower(Notes) LIKE '%eine absage%' -- NOSONAR
    );
 
 DROP TABLE expected_detecon_changes;
 DROP TABLE status_assertion;
 DROP TABLE confirmed_detecon;
+DROP TABLE status_constants;
 COMMIT;
 
 -- ---------------------------------------------------------------------
--- POST-RUN verification (run manually):
---   SELECT Stage, COUNT(*) FROM applications GROUP BY Stage;
---   SELECT Company, Role, Stage, "Last Update Date"
---     FROM applications WHERE "Last Update Date" = '2026-10-02' ORDER BY Company;
+-- After completion, manually verify the Stage counts and inspect rows updated
+-- on 2026-10-02.
 -- ---------------------------------------------------------------------

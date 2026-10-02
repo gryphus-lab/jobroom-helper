@@ -105,9 +105,7 @@ REJECT_SIGNALS = [
     "other candidate",
     "won't be able to move forward",
     "won’t be able to move forward",
-    "unfortunately",
     "nicht mehr offen",
-    "absage",
     "indispensable",
     "not to proceed",
     "not proceeding",
@@ -122,7 +120,6 @@ REJECT_SIGNALS = [
     "decided to pursue other",
     "no longer under consideration",
     "position has been filled",
-    "leider",
     "nicht weiter zu verfolgen",
     "absagen müssen",
     "nicht berücksichtigen",
@@ -133,8 +130,6 @@ REJECT_SIGNALS = [
     "cannot consider",
     "moving forward with other",
     "narrowed our pool",
-    "not sicher",
-    "nicht sicher",
 ]
 INTERVIEW_SIGNALS = [
     "vorstellungsgespräch",
@@ -510,7 +505,9 @@ def parse_pdf(month: str, path: str) -> tuple[List[Row], int | None]:
 
 
 def build_url(r: Row) -> str:
-    """Identify a row within an unchanged monthly PDF.
+    """Identify a row by its position in an unchanged monthly PDF.
+
+    Regenerating a PDF may shift detected row numbers and change these URLs.
 
     Legacy URLs without the source-row suffix need manual reconciliation before
     reimporting into a database populated by an older version of this script.
