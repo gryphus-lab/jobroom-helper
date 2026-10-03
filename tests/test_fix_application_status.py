@@ -93,8 +93,9 @@ def test_nonunique_target_rolls_back(db):
         [TARGET_URL],
     )
     db.commit()
+    sql = configured_sql()
     with pytest.raises(sqlite3.IntegrityError):
-        db.executescript(configured_sql())
+        db.executescript(sql)
     assert (
         db.execute(
             "SELECT COUNT(*) FROM applications WHERE Stage = 'Rejected'"
@@ -106,8 +107,9 @@ def test_nonunique_target_rolls_back(db):
 def test_unexpected_update_count_rolls_back(db):
     db.execute("""CREATE TRIGGER suppress_update BEFORE UPDATE ON applications
                   BEGIN SELECT RAISE(IGNORE); END""")
+    sql = configured_sql()
     with pytest.raises(sqlite3.IntegrityError):
-        db.executescript(configured_sql())
+        db.executescript(sql)
     assert not db.in_transaction
     assert (
         db.execute("SELECT Stage FROM applications WHERE id = 'target'").fetchone()[0]
@@ -115,10 +117,11 @@ def test_unexpected_update_count_rolls_back(db):
     )
 
 
+@pytest.mark.skipif(
+    shutil.which("sqlite3") is None, reason="sqlite3 executable is not available on PATH"
+)
 @pytest.mark.parametrize("configured", [False, True])
 def test_sqlite_cli_stops_on_invalid_target(db, tmp_path, configured):
-    if shutil.which("sqlite3") is None:
-        pytest.skip("sqlite3 executable is not available on PATH")
     path = tmp_path / "applications.db"
     with sqlite3.connect(path) as target:
         db.backup(target)
