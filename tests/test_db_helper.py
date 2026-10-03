@@ -285,3 +285,14 @@ def test_get_database_data_unset_columns_are_empty_strings(store):
     for col in ("Street", "Number", "POBox", "Contact", "Email", "Phone"):
         assert row[col] == "", f"{col} should be empty string, got {row[col]!r}"
         assert not (isinstance(row[col], float)), f"{col} leaked a NaN"
+
+
+@pytest.mark.parametrize("lookup_misses", [False, True])
+def test_create_page_can_return_only_new_ids(store, monkeypatch, lookup_misses):
+    props = _base_properties()
+    assert store.create_page(properties=props, return_existing=False)
+    if lookup_misses:
+        # Also exercise the conflict path when a concurrent writer inserted the URL.
+        monkeypatch.setattr(store, "_find_id_by_url", lambda url: None)
+    assert store.create_page(properties=props, return_existing=False) is None
+    assert len(store.get_database_data()) == 1
