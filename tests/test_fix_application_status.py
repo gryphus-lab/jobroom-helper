@@ -1,5 +1,6 @@
 """Exercise status reconciliation against synthetic SQLite records only."""
 
+import shutil
 import sqlite3
 import subprocess
 from pathlib import Path
@@ -116,6 +117,8 @@ def test_unexpected_update_count_rolls_back(db):
 
 @pytest.mark.parametrize("configured", [False, True])
 def test_sqlite_cli_stops_on_invalid_target(db, tmp_path, configured):
+    if shutil.which("sqlite3") is None:
+        pytest.skip("sqlite3 executable is not available on PATH")
     path = tmp_path / "applications.db"
     with sqlite3.connect(path) as target:
         db.backup(target)

@@ -595,8 +595,8 @@ def insert_rows(all_rows: List[Row], db_path: str) -> int:
     """Persist rows to SQLite using generated npa:// URLs for deduplication.
 
     Create the database and parent directories if needed. Existing URLs retain
-    their stored values and count toward the return value, which counts rows
-    receiving an ID, including duplicates. Per-row SQLite errors are caught by
+    their stored values and are excluded from the return value, which counts
+    only newly created rows. Per-row SQLite errors are caught by
     the store and excluded from the count; processing continues.
 
     Filesystem and SQLite initialization errors propagate. Months absent from

@@ -131,7 +131,12 @@ SELECT id, URL, Company, Role, "Applied date", Stage, Notes
    AND lower(COALESCE(Notes,'')) NOT LIKE '%duplicate%' -- NOSONAR
    AND (
          lower(Notes) LIKE '%we regret%' -- NOSONAR
-
+      OR lower(Notes) LIKE '%not be proceeding%' -- NOSONAR
+      OR lower(Notes) LIKE '%not be able to consider%' -- NOSONAR
+      OR lower(Notes) LIKE '%unable to consider%' -- NOSONAR
+      OR lower(Notes) LIKE '%not in a position to further%' -- NOSONAR
+      OR lower(Notes) LIKE '%we will not%' -- NOSONAR
+      OR lower(Notes) LIKE '%nicht weiter%' -- NOSONAR
       OR lower(Notes) LIKE '%leider%absage%' -- NOSONAR
       OR lower(Notes) LIKE '%eine absage%' -- NOSONAR
    );
