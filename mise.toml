@@ -47,11 +47,6 @@ alias = ["u"]
 description = "Add a new dependency"
 run = "uv add {args}"
 
-[tasks.create]
-description = "Create a new tracker entry from a URL"
-run = "uv run -m jobroom_helper create"
-alias = ["c"]
-
 [tasks.list]
 description = "List all tracked applications"
 run = "uv run -m jobroom_helper list"
