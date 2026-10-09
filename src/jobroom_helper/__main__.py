@@ -196,13 +196,20 @@ def prepare_dataframe(df):
     if "Type" in df.columns:
         df["Type"] = df["Type"].apply(extract_formatted_field)
 
-    # Keep the 4-digit PLZ for the typeahead, but leave blanks blank – otherwise
+    # Feed the typeahead a reliable search key, but leave blanks blank – otherwise
     # an empty value becomes "nan" and the typeahead fuzzy-matches a bogus Ort.
+    # If the value starts with a 4-digit Swiss PLZ, use just that code (the most
+    # precise typeahead key). Otherwise the value is a bare place name (e.g.
+    # "Zürich") – pass it through intact; truncating it to 4 chars ("Züri") made
+    # the typeahead silently select the wrong municipality.
     def _plz_prefix(value):
         text = "" if value is None or pd.isna(value) else str(value).strip()
         if text.lower() in {"", "nan", "none"}:
             return ""
-        return text[:4]
+        match = re.match(r"^(\d{4})\b", text)
+        if match:
+            return match.group(1)
+        return text
 
     df["PLZ_Ort"] = df["PLZ_Ort"].apply(_plz_prefix)
     df["RAV"] = "false"
@@ -279,13 +286,11 @@ def main():
         _run_update_rejections(ApplicationStore())
     elif mode == "new":
         _run_new_entries(ApplicationStore())
-    elif mode == "create":
-        _run_create_from_args(None, sys.argv[2:])
     elif mode == "list":
         _run_list(ApplicationStore())
     else:
         print(f"Unknown mode: {mode}")
-        print("Usage: uv run -m jobroom_helper [new|update-rejections|create|list]")
+        print("Usage: uv run -m jobroom_helper [new|update-rejections|list]")
         sys.exit(1)
 
 
@@ -295,7 +300,7 @@ def _run_list(store):
 
     if df is None or df.empty:
         print("\n     ⚠️ No applications tracked yet.")
-        print("     Use 'create <url>' to add one.")
+        print("     Tracker entries are managed outside this CLI.")
         print(EXIT_MESSAGE)
         return
 

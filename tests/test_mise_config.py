@@ -69,8 +69,7 @@ def test_add_task_unchanged(mise_config):
     assert add_task["run"] == "uv add {args}"
 
 
-def test_create_task_forwards_cli_arguments_automatically(mise_config):
-    """The create task must let mise append the URL and CLI options."""
-    create_task = mise_config["tasks"]["create"]
-    assert create_task["run"] == "uv run -m jobroom_helper create"
-    assert "{args}" not in create_task["run"]
+def test_create_task_is_removed(mise_config):
+    """The 'create' task was removed: tracker entries are session-managed, so a
+    second writer via `mise create` must not exist (avoids DB-write conflicts)."""
+    assert "create" not in mise_config["tasks"]
