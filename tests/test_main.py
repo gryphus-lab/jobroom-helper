@@ -244,7 +244,7 @@ def test_prepare_dataframe_transforms_columns():
             {
                 "Date": "{'string': '2024-01-01'}",
                 "Type": "{'string': 'electronic'}",
-                "PLZ_Ort": "12345 Bern",
+                "PLZ_Ort": "3011 Bern",
             }
         ]
     )
@@ -253,7 +253,8 @@ def test_prepare_dataframe_transforms_columns():
 
     assert df["Date"].iloc[0] == "01.01.2024"
     assert df["Type"].iloc[0] == "electronic"
-    assert df["PLZ_Ort"].iloc[0] == "1234"
+    # A 4-digit Swiss PLZ prefix is used as the precise typeahead key.
+    assert df["PLZ_Ort"].iloc[0] == "3011"
     assert df["RAV"].iloc[0] == "false"
     assert df["Arbeitspensum"].iloc[0] == "false"
     assert df["Status"].iloc[0] == "false"
@@ -1403,7 +1404,7 @@ def test_prepare_dataframe_with_missing_columns():
         [
             {
                 "Date": None,
-                "PLZ_Ort": "12345 Bern",
+                "PLZ_Ort": "3011 Bern",
                 "Company": "Test Corp",
             }
         ]
@@ -1411,7 +1412,7 @@ def test_prepare_dataframe_with_missing_columns():
 
     main_mod.prepare_dataframe(df)
 
-    assert df["PLZ_Ort"].iloc[0] == "1234"
+    assert df["PLZ_Ort"].iloc[0] == "3011"
     assert df["Date"].iloc[0] == ""
     assert df["RAV"].iloc[0] == "false"
     assert df["Arbeitspensum"].iloc[0] == "false"
@@ -1619,6 +1620,30 @@ def test_prepare_dataframe_blank_plz_stays_blank(missing_value):
     main_mod.prepare_dataframe(df)
 
     assert df["PLZ_Ort"].iloc[0] == ""
+
+
+@pytest.mark.parametrize(
+    "plz_input,expected",
+    [
+        ("8052 Zürich", "8052"),  # 4-digit PLZ prefix → precise typeahead key
+        ("8052", "8052"),
+        ("Zürich", "Zürich"),  # bare place name → passed through intact (not "Züri")
+        ("Bern", "Bern"),
+        ("Dübendorf", "Dübendorf"),  # multibyte must survive, not truncate
+        ("Egg b. Zürich", "Egg b. Zürich"),
+    ],
+)
+def test_prepare_dataframe_plz_ort_prefix_logic(plz_input, expected):
+    """4-digit PLZ is reduced to the code; a bare place name is NOT truncated.
+
+    Regression: truncating "Zürich" to "Züri" made the Job-Room typeahead
+    silently select the wrong municipality (e.g. "8132 Egg b. Zürich").
+    """
+    df = pd.DataFrame(
+        [{"Date": "2026-10-09", "Type": "electronic", "PLZ_Ort": plz_input}]
+    )
+    main_mod.prepare_dataframe(df)
+    assert df["PLZ_Ort"].iloc[0] == expected
 
 
 def test_to_swiss_date_formats_iso_and_handles_edge_cases():
