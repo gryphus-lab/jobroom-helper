@@ -286,13 +286,11 @@ def main():
         _run_update_rejections(ApplicationStore())
     elif mode == "new":
         _run_new_entries(ApplicationStore())
-    elif mode == "create":
-        _run_create_from_args(None, sys.argv[2:])
     elif mode == "list":
         _run_list(ApplicationStore())
     else:
         print(f"Unknown mode: {mode}")
-        print("Usage: uv run -m jobroom_helper [new|update-rejections|create|list]")
+        print("Usage: uv run -m jobroom_helper [new|update-rejections|list]")
         sys.exit(1)
 
 
@@ -302,7 +300,7 @@ def _run_list(store):
 
     if df is None or df.empty:
         print("\n     ⚠️ No applications tracked yet.")
-        print("     Use 'create <url>' to add one.")
+        print("     Tracker entries are managed outside this CLI.")
         print(EXIT_MESSAGE)
         return
 
