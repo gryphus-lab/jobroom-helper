@@ -136,7 +136,13 @@ def _get_open_period():
 
 
 def get_month_filter():
-    """Get filter for untracked records in the current open NpA period.
+    """Get filter for new, untracked *Applied* records in the open NpA period.
+
+    The ``new`` workflow logs brand-new work efforts on Job-Room, which are
+    always submitted as "Applied" (Noch offen). It must therefore pick up only
+    rows that are Stage='Applied' AND dirty (Tracked NULL / not 'True') within
+    the current control period. Rejected rows are handled by the ``update``
+    workflow, never by ``new``.
 
     Returns:
         Dictionary with the tracker filter criteria
@@ -148,15 +154,18 @@ def get_month_filter():
             {"property": APPLIED_DATE, "date": {"on_or_after": start_date}},
             {"property": APPLIED_DATE, "date": {"before": end_date}},
             {"property": "Tracked", "checkbox": {"equals": False}},
+            {"property": "Stage", "status": {"equals": "Applied"}},
         ]
     }
 
 
 def get_rejected_filter():
-    """Get filter for tracked records that are now rejected in the open period.
+    """Get filter for dirty *Rejected* records in the open NpA period.
 
-    These are entries already submitted to Job-Room (Tracked=True) with
-    Stage='Rejected' that need their status updated from 'Noch offen' to 'Absage'.
+    The ``update`` workflow updates the Job-Room status of applications that
+    have since been rejected. It selects rows that are Stage='Rejected' AND
+    dirty (Tracked NULL / not 'True') within the current control period, so the
+    helper re-processes exactly the rejections changed since the last run.
     """
     start_date, end_date = _get_open_period()
 
@@ -185,31 +194,56 @@ def _to_swiss_date(value):
         return text
 
 
+def _has_url(value):
+    """True when a Type/URL cell carries a non-empty URL."""
+    text = "" if value is None or pd.isna(value) else str(value).strip()
+    return text.lower() not in {"", "nan", "none"}
+
+
 def prepare_dataframe(df):
     """Prepare and transform dataframe for processing.
+
+    Enforces the Job-Room form defaults the ``new`` workflow requires, since
+    these rows are logged as fresh work efforts:
+
+    * ``Date`` is always set to today (Swiss TT.MM.JJJJ) – the submission date.
+    * ``Type`` defaults to ``"Elektronisch"`` for any row that carries a URL
+      (an online application), matching the Job-Room dropdown.
+    * ``PLZ_Ort`` is reduced to a 4-digit Swiss PLZ for the typeahead; rows
+      without a 4-digit code fall back to ``"8001 Zürich"`` so the typeahead
+      always has a precise, valid key (never a bare place name that fuzzy-
+      matched the wrong municipality).
 
     Args:
         df: Dataframe to prepare
     """
-    if "Date" in df.columns:
-        df["Date"] = df["Date"].apply(extract_formatted_field).apply(_to_swiss_date)
+    # Date is always the submission date (today), in Swiss format.
+    today_swiss = datetime.now(timezone.utc).strftime("%d.%m.%Y")
+    df["Date"] = today_swiss
+
+    # Type: online applications (any row with a URL) are "Elektronisch".
     if "Type" in df.columns:
         df["Type"] = df["Type"].apply(extract_formatted_field)
+    else:
+        df["Type"] = ""
+    if "URL" in df.columns:
+        df["Type"] = df["URL"].apply(
+            lambda url: "Elektronisch" if _has_url(url) else ""
+        )
 
-    # Feed the typeahead a reliable search key, but leave blanks blank – otherwise
-    # an empty value becomes "nan" and the typeahead fuzzy-matches a bogus Ort.
-    # If the value starts with a 4-digit Swiss PLZ, use just that code (the most
-    # precise typeahead key). Otherwise the value is a bare place name (e.g.
-    # "Zürich") – pass it through intact; truncating it to 4 chars ("Züri") made
-    # the typeahead silently select the wrong municipality.
+    # Feed the typeahead a reliable 4-digit Swiss PLZ. If the stored value
+    # starts with a 4-digit code, use just that code (the most precise key).
+    # Otherwise there is no usable code – fall back to the canonical default
+    # "8001 Zürich" -> "8001" rather than passing a bare place name (which
+    # previously fuzzy-matched the wrong municipality).
+    _default_plz = "8001"
+
     def _plz_prefix(value):
         text = "" if value is None or pd.isna(value) else str(value).strip()
-        if text.lower() in {"", "nan", "none"}:
-            return ""
         match = re.match(r"^(\d{4})\b", text)
         if match:
             return match.group(1)
-        return text
+        return _default_plz
 
     df["PLZ_Ort"] = df["PLZ_Ort"].apply(_plz_prefix)
     df["RAV"] = "false"

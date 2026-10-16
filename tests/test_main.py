@@ -156,7 +156,11 @@ def test_get_month_and_rejected_filters_use_shared_dates(monkeypatch):
     assert rejected_filter["and"][1]["property"] == main_mod.APPLIED_DATE
     assert month_filter["and"][2]["property"] == "Tracked"
     assert rejected_filter["and"][2]["property"] == "Tracked"
+    # new -> only Applied; update -> only Rejected (both dirty, same period).
+    assert month_filter["and"][3]["property"] == "Stage"
+    assert month_filter["and"][3]["status"]["equals"] == "Applied"
     assert rejected_filter["and"][3]["property"] == "Stage"
+    assert rejected_filter["and"][3]["status"]["equals"] == "Rejected"
 
 
 def test_create_arg_parser_uses_expected_defaults():
@@ -244,6 +248,7 @@ def test_prepare_dataframe_transforms_columns():
             {
                 "Date": "{'string': '2024-01-01'}",
                 "Type": "{'string': 'electronic'}",
+                "URL": "https://www.linkedin.com/jobs/view/1234567890/",
                 "PLZ_Ort": "3011 Bern",
             }
         ]
@@ -251,8 +256,12 @@ def test_prepare_dataframe_transforms_columns():
 
     main_mod.prepare_dataframe(df)
 
-    assert df["Date"].iloc[0] == "01.01.2024"
-    assert df["Type"].iloc[0] == "electronic"
+    # Date is always forced to today's submission date (Swiss format), not the
+    # stored value.
+    today_swiss = datetime.now(timezone.utc).strftime("%d.%m.%Y")
+    assert df["Date"].iloc[0] == today_swiss
+    # A row with a URL is an online application -> Type "Elektronisch".
+    assert df["Type"].iloc[0] == "Elektronisch"
     # A 4-digit Swiss PLZ prefix is used as the precise typeahead key.
     assert df["PLZ_Ort"].iloc[0] == "3011"
     assert df["RAV"].iloc[0] == "false"
@@ -1399,7 +1408,7 @@ def test_create_driver_no_chromedriver_found(monkeypatch):
 
 
 def test_prepare_dataframe_with_missing_columns():
-    """Test prepare_dataframe when Type is missing and Date is empty."""
+    """Type missing and no URL: Date forced to today, Type blank."""
     df = pd.DataFrame(
         [
             {
@@ -1413,7 +1422,11 @@ def test_prepare_dataframe_with_missing_columns():
     main_mod.prepare_dataframe(df)
 
     assert df["PLZ_Ort"].iloc[0] == "3011"
-    assert df["Date"].iloc[0] == ""
+    # Date is always forced to today's submission date, even when stored None.
+    today_swiss = datetime.now(timezone.utc).strftime("%d.%m.%Y")
+    assert df["Date"].iloc[0] == today_swiss
+    # No URL column -> not an online application -> Type stays blank.
+    assert df["Type"].iloc[0] == ""
     assert df["RAV"].iloc[0] == "false"
     assert df["Arbeitspensum"].iloc[0] == "false"
     assert df["Status"].iloc[0] == "false"
@@ -1605,8 +1618,13 @@ def test_run_update_rejections_handles_screenshot_failure(monkeypatch):
 
 
 @pytest.mark.parametrize("missing_value", [None, pd.NA])
-def test_prepare_dataframe_blank_plz_stays_blank(missing_value):
-    """A missing PLZ_Ort must stay blank, not become 'nan' (bogus typeahead)."""
+def test_prepare_dataframe_blank_plz_falls_back_to_default(missing_value):
+    """A missing PLZ_Ort must fall back to the canonical "8001", never 'nan'.
+
+    An empty/NaN value previously stayed blank; it now defaults to the
+    canonical "8001 Zürich" -> "8001" so the typeahead always has a precise,
+    valid key (and never fuzzy-matches 'nan' to a bogus Ort).
+    """
     df = pd.DataFrame(
         [
             {
@@ -1619,7 +1637,7 @@ def test_prepare_dataframe_blank_plz_stays_blank(missing_value):
 
     main_mod.prepare_dataframe(df)
 
-    assert df["PLZ_Ort"].iloc[0] == ""
+    assert df["PLZ_Ort"].iloc[0] == "8001"
 
 
 @pytest.mark.parametrize(
@@ -1627,17 +1645,25 @@ def test_prepare_dataframe_blank_plz_stays_blank(missing_value):
     [
         ("8052 Zürich", "8052"),  # 4-digit PLZ prefix → precise typeahead key
         ("8052", "8052"),
-        ("Zürich", "Zürich"),  # bare place name → passed through intact (not "Züri")
-        ("Bern", "Bern"),
-        ("Dübendorf", "Dübendorf"),  # multibyte must survive, not truncate
-        ("Egg b. Zürich", "Egg b. Zürich"),
+        ("3011 Bern", "3011"),
+        # No usable 4-digit code → canonical default "8001 Zürich" -> "8001".
+        # (Never truncate a bare place name to "Züri"; never pass it through
+        # bare, which fuzzy-matched the wrong municipality.)
+        ("Zürich", "8001"),
+        ("Bern", "8001"),
+        ("Dübendorf", "8001"),  # multibyte must not truncate; falls back cleanly
+        ("Egg b. Zürich", "8001"),
+        ("", "8001"),
+        (None, "8001"),
     ],
 )
 def test_prepare_dataframe_plz_ort_prefix_logic(plz_input, expected):
-    """4-digit PLZ is reduced to the code; a bare place name is NOT truncated.
+    """4-digit PLZ is reduced to the code; anything else falls back to "8001".
 
-    Regression: truncating "Zürich" to "Züri" made the Job-Room typeahead
+    Regression 1: truncating "Zürich" to "Züri" made the Job-Room typeahead
     silently select the wrong municipality (e.g. "8132 Egg b. Zürich").
+    Regression 2: a bare place name with no 4-digit code must default to the
+    canonical "8001 Zürich" so the typeahead always has a precise, valid key.
     """
     df = pd.DataFrame(
         [{"Date": "2026-10-09", "Type": "electronic", "PLZ_Ort": plz_input}]
@@ -1659,8 +1685,35 @@ def test_to_swiss_date_formats_iso_and_handles_edge_cases():
     assert main_mod._to_swiss_date("16.09.2026") == "16.09.2026"
 
 
-def test_prepare_dataframe_date_is_swiss_format():
-    """prepare_dataframe must emit the Date column as TT.MM.JJJJ for the form."""
+@pytest.mark.parametrize(
+    "url_value,expected_type",
+    [
+        ("https://www.linkedin.com/jobs/view/1/", "Elektronisch"),
+        ("https://example.com/careers/role", "Elektronisch"),
+        ("", ""),
+        (None, ""),
+        ("nan", ""),
+    ],
+)
+def test_prepare_dataframe_type_elektronisch_when_url(url_value, expected_type):
+    """A row with a URL is an online application -> Type 'Elektronisch'.
+
+    Rows without a URL leave Type blank so the form filler skips the field.
+    """
+    df = pd.DataFrame(
+        [{"Date": "2026-09-16", "Type": "", "URL": url_value, "PLZ_Ort": "8001"}]
+    )
+    main_mod.prepare_dataframe(df)
+    assert df["Type"].iloc[0] == expected_type
+
+
+def test_prepare_dataframe_date_is_today_swiss_format():
+    """Date is always forced to today's submission date in TT.MM.JJJJ.
+
+    The stored Date is ignored: a new work effort is logged on Job-Room with
+    the current date, regardless of what the row carried.
+    """
     df = pd.DataFrame([{"Date": "2026-09-16", "Type": "electronic", "PLZ_Ort": ""}])
     main_mod.prepare_dataframe(df)
-    assert df["Date"].iloc[0] == "16.09.2026"
+    today_swiss = datetime.now(timezone.utc).strftime("%d.%m.%Y")
+    assert df["Date"].iloc[0] == today_swiss
