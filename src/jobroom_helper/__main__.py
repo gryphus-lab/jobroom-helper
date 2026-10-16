@@ -241,7 +241,7 @@ def prepare_dataframe(df):
 
     def _plz_prefix(value):
         text = "" if value is None or pd.isna(value) else str(value).strip()
-        match = re.match(r"^([0-9]{4})(?!\d)", text)
+        match = re.match(r"^(\d{4})(?!\d)", text)
         if match:
             return match.group(1)
         return _default_plz
