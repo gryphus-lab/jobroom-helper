@@ -1,6 +1,7 @@
 import builtins
 from datetime import datetime, timezone
 from typing import Any, cast
+from zoneinfo import ZoneInfo
 
 import httpcore
 import httpx
@@ -258,7 +259,7 @@ def test_prepare_dataframe_transforms_columns():
 
     # Date is always forced to today's submission date (Swiss format), not the
     # stored value.
-    today_swiss = datetime.now(timezone.utc).strftime("%d.%m.%Y")
+    today_swiss = datetime.now(ZoneInfo("Europe/Zurich")).strftime("%d.%m.%Y")
     assert df["Date"].iloc[0] == today_swiss
     # A row with a URL is an online application -> Type "Elektronisch".
     assert df["Type"].iloc[0] == "Elektronisch"
@@ -1423,7 +1424,7 @@ def test_prepare_dataframe_with_missing_columns():
 
     assert df["PLZ_Ort"].iloc[0] == "3011"
     # Date is always forced to today's submission date, even when stored None.
-    today_swiss = datetime.now(timezone.utc).strftime("%d.%m.%Y")
+    today_swiss = datetime.now(ZoneInfo("Europe/Zurich")).strftime("%d.%m.%Y")
     assert df["Date"].iloc[0] == today_swiss
     # No URL column -> not an online application -> Type stays blank.
     assert df["Type"].iloc[0] == ""
@@ -1646,6 +1647,9 @@ def test_prepare_dataframe_blank_plz_falls_back_to_default(missing_value):
         ("8052 Zürich", "8052"),  # 4-digit PLZ prefix → precise typeahead key
         ("8052", "8052"),
         ("3011 Bern", "3011"),
+        ("3011Bern", "3011"),
+        ("30111 Bern", "8001"),
+        ("３０１１ Bern", "8001"),
         # No usable 4-digit code → canonical default "8001 Zürich" -> "8001".
         # (Never truncate a bare place name to "Züri"; never pass it through
         # bare, which fuzzy-matched the wrong municipality.)
@@ -1707,13 +1711,27 @@ def test_prepare_dataframe_type_elektronisch_when_url(url_value, expected_type):
     assert df["Type"].iloc[0] == expected_type
 
 
-def test_prepare_dataframe_date_is_today_swiss_format():
+@pytest.mark.parametrize(
+    "now_utc",
+    [
+        datetime(2026, 1, 15, 23, 30, tzinfo=timezone.utc),
+        datetime(2026, 7, 15, 22, 30, tzinfo=timezone.utc),
+    ],
+)
+def test_prepare_dataframe_date_is_today_swiss_format(monkeypatch, now_utc):
     """Date is always forced to today's submission date in TT.MM.JJJJ.
 
     The stored Date is ignored: a new work effort is logged on Job-Room with
     the current date, regardless of what the row carried.
     """
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now_utc.astimezone(tz)
+
+    monkeypatch.setattr(main_mod, "datetime", FrozenDateTime)
     df = pd.DataFrame([{"Date": "2026-09-16", "Type": "electronic", "PLZ_Ort": ""}])
     main_mod.prepare_dataframe(df)
-    today_swiss = datetime.now(timezone.utc).strftime("%d.%m.%Y")
+    today_swiss = now_utc.astimezone(ZoneInfo("Europe/Zurich")).strftime("%d.%m.%Y")
     assert df["Date"].iloc[0] == today_swiss

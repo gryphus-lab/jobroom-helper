@@ -18,6 +18,7 @@ import traceback
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
+from zoneinfo import ZoneInfo
 
 import httpcore
 import httpx
@@ -217,8 +218,8 @@ def prepare_dataframe(df):
     Args:
         df: Dataframe to prepare
     """
-    # Date is always the submission date (today), in Swiss format.
-    today_swiss = datetime.now(timezone.utc).strftime("%d.%m.%Y")
+    # Date is always the submission date (today in Zurich), in Swiss format.
+    today_swiss = datetime.now(ZoneInfo("Europe/Zurich")).strftime("%d.%m.%Y")
     df["Date"] = today_swiss
 
     # Type: online applications (any row with a URL) are "Elektronisch".
@@ -240,7 +241,7 @@ def prepare_dataframe(df):
 
     def _plz_prefix(value):
         text = "" if value is None or pd.isna(value) else str(value).strip()
-        match = re.match(r"^(\d{4})\b", text)
+        match = re.match(r"^([0-9]{4})(?!\d)", text)
         if match:
             return match.group(1)
         return _default_plz
