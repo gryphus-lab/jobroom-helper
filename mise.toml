@@ -20,16 +20,8 @@ echo "Project: $PROJECT_NAME"
 echo "Python: $(python --version)"
 '''
 
-[tasks.lint]
-description = "Lint and check formatting with Ruff and Prettier"
-run = "uv run ruff check . && uv run ruff format --check . && prettier --check ."
-
-[tasks.format]
-description = "Format and fix code with Ruff and Prettier"
-run = "uv run ruff format . && uv run ruff check --fix . && prettier --write ."
-
 # Tasks
-[tasks.install]
+[tasks.bootstrap]
 description = "Install dependencies using uv"
 run = "uv sync"
 
@@ -59,3 +51,11 @@ run = "uv sync --upgrade"
 [tasks.test]
 description = "Run tests"
 run = "uv run pytest"
+
+[tasks.lint]
+description = "Lint and check formatting with Ruff and Prettier"
+run = "uv run ruff check . && uv run ruff format --check . && prettier --check ."
+
+[tasks.format]
+description = "Format and fix code with Ruff and Prettier"
+run = "uv run ruff format . && uv run ruff check --fix . && prettier --write ."
