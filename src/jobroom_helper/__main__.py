@@ -233,15 +233,20 @@ def prepare_dataframe(df):
         )
 
     # Feed the typeahead a reliable 4-digit Swiss PLZ. If the stored value
-    # starts with a 4-digit code, use just that code (the most precise key).
-    # Otherwise there is no usable code – fall back to the canonical default
-    # "8001 Zürich" -> "8001" rather than passing a bare place name (which
-    # previously fuzzy-matched the wrong municipality).
+    # starts with exactly four ASCII digits, use just that code (the most
+    # precise key). Otherwise there is no usable code – fall back to the
+    # canonical default "8001 Zürich" -> "8001" rather than passing a bare
+    # place name (which previously fuzzy-matched the wrong municipality).
+    #
+    # The class is [0-9], not \d: under Python's Unicode default \d also matches
+    # fullwidth/other-script digits (e.g. "３０１１"), which are not a valid
+    # Swiss PLZ and must fall back to the default. The negative lookahead
+    # (?![0-9]) rejects 5+ digit runs (e.g. "30111").
     _default_plz = "8001"
 
     def _plz_prefix(value):
         text = "" if value is None or pd.isna(value) else str(value).strip()
-        match = re.match(r"^(\d{4})(?!\d)", text)
+        match = re.match(r"^([0-9]{4})(?![0-9])", text)
         if match:
             return match.group(1)
         return _default_plz
