@@ -7,11 +7,14 @@ from jobroom_helper.utils import selenium_helper
 
 
 def test_resolve_type_selector_known():
-    electronic_selector = selenium_helper.resolve_type_selector("electronic")
+    # Input values are the German Job-Room terms the DataFrame now carries
+    # ("Elektronisch"/"Telefonisch"); the resolved DOM selector still targets
+    # the underlying 'electronic'/'phone' checkbox attributes.
+    electronic_selector = selenium_helper.resolve_type_selector("elektronisch")
     assert electronic_selector is not None
     assert "electronic" in electronic_selector
 
-    phone_selector = selenium_helper.resolve_type_selector("phone")
+    phone_selector = selenium_helper.resolve_type_selector("telefonisch")
     assert phone_selector is not None
     assert "phone" in phone_selector
 
@@ -584,8 +587,8 @@ def test_process_records_flow(monkeypatch):
 
 def test_resolve_type_selector_case_insensitive():
     """Test resolve_type_selector handles case variations."""
-    assert selenium_helper.resolve_type_selector("ELECTRONIC") is not None
-    assert selenium_helper.resolve_type_selector("Phone") is not None
+    assert selenium_helper.resolve_type_selector("ELEKTRONISCH") is not None
+    assert selenium_helper.resolve_type_selector("Telefonisch") is not None
     assert selenium_helper.resolve_type_selector("VORSTELLUNGSGESPRÄCH") is not None
 
 

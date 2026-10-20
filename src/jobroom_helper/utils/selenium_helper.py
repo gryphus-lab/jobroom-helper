@@ -53,9 +53,9 @@ def resolve_type_selector(value):
     """
     type_value = str(get_notion_scalar_value(value)).strip().lower()
 
-    if type_value == "electronic":
+    if type_value == "elektronisch":
         return "label[for*='alv-checkbox-portal'][for*='electronic']"
-    elif type_value == "phone":
+    elif type_value == "telefonisch":
         return "label[for*='alv-checkbox-portal'][for*='phone']"
     elif type_value == "vorstellungsgespräch":
         return "//label[normalize-space()='Vorstellungsgespräch']"
