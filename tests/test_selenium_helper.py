@@ -454,6 +454,11 @@ def test_expand_month_section_and_process_rejected_entry(monkeypatch):
     called = {}
     monkeypatch.setattr(
         selenium_helper,
+        "_search_for_company",
+        lambda *_args, **_kwargs: called.setdefault("searched", True) or True,
+    )
+    monkeypatch.setattr(
+        selenium_helper,
         "_find_existing_entry",
         lambda *_args, **_kwargs: object(),
     )
@@ -469,6 +474,7 @@ def test_expand_month_section_and_process_rejected_entry(monkeypatch):
     )
 
     selenium_helper._process_rejected_entry(driver, None, None, FakeRow(), 0, 1)
+    assert called.get("searched") is True
     assert called.get("updated") is True
 
 
@@ -657,6 +663,57 @@ def test_expand_month_section_for_each_month(monkeypatch):
         calls.clear()
         selenium_helper._expand_month_section_for(driver, month, "2024")
         assert calls
+
+
+def test_search_for_company_types_query(monkeypatch):
+    """_search_for_company finds the search box, clears it, and types company."""
+    monkeypatch.setattr(selenium_helper.time, "sleep", lambda *_: None)
+
+    class FakeBox:
+        def __init__(self):
+            self.keys = []
+            self.clicked = False
+
+        def click(self):
+            self.clicked = True
+
+        def send_keys(self, *args):
+            self.keys.append(args)
+
+    box = FakeBox()
+
+    class FakeWait:
+        def until(self, _condition):
+            return box
+
+    class Driver:
+        def __init__(self):
+            self.scripts = []
+
+        def execute_script(self, *args, **kwargs):
+            self.scripts.append(args)
+
+    result = selenium_helper._search_for_company(Driver(), FakeWait(), "Acme AG")
+    assert result is True
+    assert box.clicked is True
+    # The company name was typed into the box.
+    assert any("Acme AG" in a for a in box.keys)
+
+
+def test_search_for_company_returns_false_when_box_missing(monkeypatch):
+    """_search_for_company returns False gracefully if the search box isn't found."""
+    monkeypatch.setattr(selenium_helper.time, "sleep", lambda *_: None)
+
+    class FakeWait:
+        def until(self, _condition):
+            raise selenium_helper.TimeoutException("no search box")
+
+    class Driver:
+        def execute_script(self, *args, **kwargs):
+            pass
+
+    result = selenium_helper._search_for_company(Driver(), FakeWait(), "Acme AG")
+    assert result is False
 
 
 def test_find_entry_with_no_entries_returns_none():
