@@ -16,6 +16,7 @@ from jobroom_helper.config import (
     EXECUTE_SCRIPT_CLICK,
     FIELD_SELECTORS,
     SCROLL_INTO_VIEW_SCRIPT,
+    WORK_EFFORTS_SEARCH_SELECTOR,
     get_website_url,
 )
 from jobroom_helper.utils.session_helper import load_session, save_session
@@ -400,6 +401,40 @@ def _print_rejection_header(index, total, company, role, absagegrund):
     print(f"{'=' * 60}")
 
 
+def _search_for_company(driver, wait, company):
+    """Filter the work-efforts list by company name via the search box.
+
+    Uses the search field (``WORK_EFFORTS_SEARCH_SELECTOR``) to locate the
+    entry regardless of which control period it belongs to, instead of
+    expanding the current month's section. Returns True if the search box
+    was found and the query submitted.
+
+    Args:
+        driver: Selenium WebDriver instance
+        wait: WebDriverWait instance
+        company: Company name to type into the search box
+    """
+    try:
+        search_box = wait.until(
+            ec.presence_of_element_located(
+                (By.CSS_SELECTOR, WORK_EFFORTS_SEARCH_SELECTOR)
+            )
+        )
+        driver.execute_script(SCROLL_INTO_VIEW_SCRIPT, search_box)
+        time.sleep(0.5)
+        # Clear any previous query, then type the company name.
+        search_box.click()
+        search_box.send_keys(Keys.CONTROL, "a")
+        search_box.send_keys(Keys.DELETE)
+        search_box.send_keys(company)
+        time.sleep(2)  # allow the filtered list to re-render
+        print(f"   ✓ Searched for company: {company}")
+        return True
+    except (NoSuchElementException, TimeoutException, WebDriverException) as exc:
+        print(f"   ⚠️ Could not use search box for {company}: {exc}")
+        return False
+
+
 def _process_rejected_entry(driver, wait, store, row, index, total):
     """Find and update one rejected application represented by a tracker row."""
     company = str(row.get("Company", ""))
@@ -418,6 +453,7 @@ def _process_rejected_entry(driver, wait, store, row, index, total):
     _print_rejection_header(index, total, company, role, absagegrund)
 
     try:
+        _search_for_company(driver, wait, company)
         entry = _find_existing_entry(driver, company, role)
         if entry is None:
             _report_missing_entry(driver, index, company)
@@ -476,6 +512,10 @@ def update_rejected_records(driver, wait, df, store):
 
     The Absagegrund field is filled with: "<DD.MM>: <reason>"
 
+    Each rejected record is located by typing its company name into the
+    work-efforts search box, so entries are found regardless of the current
+    control period (no month-section expansion required).
+
     Args:
         driver: Selenium WebDriver instance
         wait: WebDriverWait instance
@@ -484,8 +524,6 @@ def update_rejected_records(driver, wait, df, store):
     """
     driver.get(get_website_url() + "work-efforts")
     time.sleep(3)
-
-    _expand_month_section(driver, df)
 
     for index, row in df.iterrows():
         _process_rejected_entry(driver, wait, store, row, index, len(df))

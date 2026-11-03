@@ -53,6 +53,11 @@ REJECTION_SELECTORS = {
     "absagegrund_input": "textarea[id*='rejection-reason']",
 }
 
+# Search box on the work-efforts page used to locate an existing entry by
+# company name, independent of the current control period. The id contains
+# literal dots, so they must be escaped in a CSS selector.
+WORK_EFFORTS_SEARCH_SELECTOR = r"#alv-input-field-portal\.work-efforts\.search\.query-0"
+
 ENTRY_SELECTOR = "alv-work-effort"
 
 
