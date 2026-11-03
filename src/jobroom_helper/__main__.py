@@ -161,19 +161,18 @@ def get_month_filter():
 
 
 def get_rejected_filter():
-    """Get filter for dirty *Rejected* records in the open NpA period.
+    """Get filter for dirty *Rejected* records, regardless of control period.
 
     The ``update`` workflow updates the Job-Room status of applications that
-    have since been rejected. It selects rows that are Stage='Rejected' AND
-    dirty (Tracked NULL / not 'True') within the current control period, so the
-    helper re-processes exactly the rejections changed since the last run.
+    have since been rejected. A rejection often lands in a different control
+    period than the one the application was submitted in (e.g. applied in
+    October, rejected in November), and the entry is located on Job-Room by
+    company search rather than by month section. The filter therefore selects
+    rows purely by Stage='Rejected' AND dirty (Tracked NULL / not 'True'),
+    with no Applied-date window, so every unprocessed rejection is picked up.
     """
-    start_date, end_date = _get_open_period()
-
     return {
         "and": [
-            {"property": APPLIED_DATE, "date": {"on_or_after": start_date}},
-            {"property": APPLIED_DATE, "date": {"before": end_date}},
             {"property": "Tracked", "checkbox": {"equals": False}},
             {"property": "Stage", "status": {"equals": "Rejected"}},
         ]
@@ -1181,7 +1180,7 @@ def _run_update_rejections(store):
     df = store.get_database_data(filter=rejected_filter)
 
     if df.empty:
-        print("\n     ⚠️ No rejected records to update for this month.")
+        print("\n     ⚠️ No rejected records to update.")
         print("     All entries are either still open or already updated.")
         print(EXIT_MESSAGE)
         return

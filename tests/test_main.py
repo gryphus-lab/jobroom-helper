@@ -145,23 +145,39 @@ class FakeDateTime(datetime):
         return datetime(2024, 2, 1, tzinfo=timezone.utc)
 
 
-def test_get_month_and_rejected_filters_use_shared_dates(monkeypatch):
+def test_month_filter_uses_applied_date_window(monkeypatch):
+    """The `new` flow is scoped to the open control period by Applied date."""
     monkeypatch.setattr(
         main_mod, "_get_open_period", lambda: ("2024-01-01", "2024-02-05")
     )
 
     month_filter = main_mod.get_month_filter()
-    rejected_filter = main_mod.get_rejected_filter()
 
     assert month_filter["and"][0]["property"] == main_mod.APPLIED_DATE
-    assert rejected_filter["and"][1]["property"] == main_mod.APPLIED_DATE
     assert month_filter["and"][2]["property"] == "Tracked"
-    assert rejected_filter["and"][2]["property"] == "Tracked"
-    # new -> only Applied; update -> only Rejected (both dirty, same period).
     assert month_filter["and"][3]["property"] == "Stage"
     assert month_filter["and"][3]["status"]["equals"] == "Applied"
-    assert rejected_filter["and"][3]["property"] == "Stage"
-    assert rejected_filter["and"][3]["status"]["equals"] == "Rejected"
+
+
+def test_rejected_filter_has_no_date_window():
+    """The `update` flow selects dirty rejections regardless of control period.
+
+    A rejection often lands in a different control period than the original
+    application, so the rejected filter must NOT constrain by Applied date;
+    it selects purely by Stage='Rejected' AND Tracked dirty.
+    """
+    rejected_filter = main_mod.get_rejected_filter()
+
+    clauses = rejected_filter["and"]
+    # Only two clauses: Tracked (dirty) + Stage=Rejected. No date window.
+    assert len(clauses) == 2
+    assert all(c.get("property") != main_mod.APPLIED_DATE for c in clauses)
+    assert not any("date" in c for c in clauses)
+    assert {c["property"] for c in clauses} == {"Tracked", "Stage"}
+    stage_clause = next(c for c in clauses if c["property"] == "Stage")
+    assert stage_clause["status"]["equals"] == "Rejected"
+    tracked_clause = next(c for c in clauses if c["property"] == "Tracked")
+    assert tracked_clause["checkbox"]["equals"] is False
 
 
 def test_create_arg_parser_uses_expected_defaults():
