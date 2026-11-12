@@ -18,9 +18,12 @@ def test_resolve_type_selector_known():
     assert phone_selector is not None
     assert "phone" in phone_selector
 
-    assert selenium_helper.resolve_type_selector(
-        {"type": "string", "string": "Vorstellungsgespräch"}
-    ) == "//label[normalize-space()='Vorstellungsgespräch']"
+    assert (
+        selenium_helper.resolve_type_selector(
+            {"type": "string", "string": "Vorstellungsgespräch"}
+        )
+        == "//label[normalize-space()='Vorstellungsgespräch']"
+    )
     assert selenium_helper.resolve_type_selector("unknown") is None
 
 
@@ -261,8 +264,7 @@ def test_find_entry_by_company_prefix():
 
 def test_format_absagegrund_parses_date_and_falls_back():
     assert (
-        selenium_helper._format_absagegrund("2026-07-01", "Reason")
-        == "01.07: Reason"
+        selenium_helper._format_absagegrund("2026-07-01", "Reason") == "01.07: Reason"
     )
     assert selenium_helper._format_absagegrund("invalid", "Reason") == (
         "invalid: Reason"
@@ -365,9 +367,7 @@ def test_update_notion_tracked_prints_status(monkeypatch):
     selenium_helper._update_notion_tracked(Notion(False), "page123")
     assert any("Record processed" in item for args in printed for item in args)
     assert any(
-        "Failed to update tracker record." in item
-        for args in printed
-        for item in args
+        "Failed to update tracker record." in item for args in printed for item in args
     )
 
 
@@ -403,7 +403,9 @@ def test_fill_typeahead_supports_suggestion_and_enter(monkeypatch):
 
     driver = SimpleNamespace(execute_script=lambda *args, **kwargs: None)
     element = Elem()
-    selenium_helper.fill_typeahead(driver, Wait("suggestion"), element, "Role", "Developer")
+    selenium_helper.fill_typeahead(
+        driver, Wait("suggestion"), element, "Role", "Developer"
+    )
     assert element.values == ["Developer"]
 
     fallback_element = Elem()
@@ -671,14 +673,22 @@ def test_search_for_company_types_query(monkeypatch):
 
     class FakeBox:
         def __init__(self):
-            self.keys = []
+            self.events = []  # ordered log of clear()/send_keys calls
             self.clicked = False
+            self.cleared = False
 
         def click(self):
             self.clicked = True
 
+        def clear(self):
+            self.cleared = True
+            self.events.append(("clear",))
+
         def send_keys(self, *args):
-            self.keys.append(args)
+            self.events.append(args)
+
+        def get_attribute(self, _name):
+            return ""  # field reports empty after clearing
 
     box = FakeBox()
 
@@ -696,8 +706,65 @@ def test_search_for_company_types_query(monkeypatch):
     result = selenium_helper._search_for_company(Driver(), FakeWait(), "Acme AG")
     assert result is True
     assert box.clicked is True
+    assert box.cleared is True
     # The company name was typed into the box.
-    assert any("Acme AG" in a for a in box.keys)
+    assert any("Acme AG" in a for a in box.events)
+    # Clear happens BEFORE the company string is typed (no concatenation).
+    clear_idx = box.events.index(("clear",))
+    type_idx = next(i for i, a in enumerate(box.events) if "Acme AG" in a)
+    assert clear_idx < type_idx
+
+
+def test_search_for_company_backspaces_residual_value(monkeypatch):
+    """If the field still holds a prior query, it is backspaced out before typing.
+
+    Guards the concatenated-search bug: when several rejections are processed
+    in one run, a stale value must not survive into the next search.
+    """
+    monkeypatch.setattr(selenium_helper.time, "sleep", lambda *_: None)
+
+    class FakeBox:
+        def __init__(self):
+            self.events = []
+            # Field reports a leftover query until a BACKSPACE flush occurs.
+            self._value = "StaleCo"
+
+        def click(self):
+            pass
+
+        def clear(self):
+            self.events.append(("clear",))
+
+        def send_keys(self, *args):
+            self.events.append(args)
+            # BACKSPACE arrives as a single string (BACKSPACE repeated N times).
+            if any(
+                isinstance(a, str) and selenium_helper.Keys.BACKSPACE in a for a in args
+            ):
+                self._value = ""  # flush clears the residual value
+
+        def get_attribute(self, _name):
+            return self._value
+
+    box = FakeBox()
+
+    class FakeWait:
+        def until(self, _condition):
+            return box
+
+    class Driver:
+        def execute_script(self, *args, **kwargs):
+            pass
+
+    result = selenium_helper._search_for_company(Driver(), FakeWait(), "Acme AG")
+    assert result is True
+    # A BACKSPACE fallback fired to flush the residual "StaleCo" value.
+    assert any(
+        isinstance(k, str) and selenium_helper.Keys.BACKSPACE in k
+        for a in box.events
+        for k in a
+    )
+    assert any("Acme AG" in a for a in box.events)
 
 
 def test_search_for_company_returns_false_when_box_missing(monkeypatch):
@@ -718,6 +785,7 @@ def test_search_for_company_returns_false_when_box_missing(monkeypatch):
 
 def test_find_entry_with_no_entries_returns_none():
     """Test _find_existing_entry when no entries exist."""
+
     class Driver:
         def find_elements(self, by, selector):
             return []
@@ -825,7 +893,10 @@ def test_find_entry_by_company_requires_matching_role():
     entries = [Entry("Acme Corp Manager")]
 
     # Company matches but role does not -> no match
-    assert selenium_helper._find_entry_by_company(entries, "Acme", role="Developer") is None
+    assert (
+        selenium_helper._find_entry_by_company(entries, "Acme", role="Developer")
+        is None
+    )
 
     # Company and role both match -> match
     assert (
@@ -985,41 +1056,39 @@ def test_update_rejected_entry_completes_when_both_steps_succeed(monkeypatch):
     assert calls["notion_page_id"] == "p1"
 
 
-
-
 def test_resolve_element_type_field_uses_xpath_for_slash_selector_v2(monkeypatch):
     """Test _resolve_element uses XPath locator when resolve_type_selector
     returns an XPath-style selector (starting with '//')."""
-    
+
     # Track what expected_conditions was called with
     ec_calls = []
-    
+
     # Mock ec.presence_of_element_located to capture the locator tuple
     class FakeEC:
         @staticmethod
         def presence_of_element_located(locator):
             ec_calls.append(locator)
             return lambda driver: SimpleNamespace()
-    
+
     class Wait:
         def until(self, arg):
             return SimpleNamespace()
-    
+
     monkeypatch.setattr(
         selenium_helper,
         "resolve_type_selector",
         lambda value: "//label[normalize-space()='Vorstellungsgespräch']",
     )
-    
+
     # Replace ec in the module
     original_ec = selenium_helper.ec
     selenium_helper.ec = FakeEC()
-    
+
     try:
         selenium_helper._resolve_element(
             Wait(), "Type", "dummy", "vorstellungsgespräch", row={}
         )
-        
+
         assert ec_calls
         locator = ec_calls[0]
         assert locator[0] == selenium_helper.By.XPATH
@@ -1029,34 +1098,34 @@ def test_resolve_element_type_field_uses_xpath_for_slash_selector_v2(monkeypatch
 
 def test_resolve_element_type_field_uses_css_for_plain_selector_v2(monkeypatch):
     """Test _resolve_element uses CSS selector locator for non-XPath selectors."""
-    
+
     # Track what expected_conditions was called with
     ec_calls = []
-    
+
     # Mock ec.presence_of_element_located to capture the locator tuple
     class FakeEC:
         @staticmethod
         def presence_of_element_located(locator):
             ec_calls.append(locator)
             return lambda driver: SimpleNamespace()
-    
+
     class Wait:
         def until(self, arg):
             return SimpleNamespace()
-    
+
     monkeypatch.setattr(
         selenium_helper,
         "resolve_type_selector",
         lambda value: "label[for*='alv-checkbox-portal'][for*='electronic']",
     )
-    
+
     # Replace ec in the module
     original_ec = selenium_helper.ec
     selenium_helper.ec = FakeEC()
-    
+
     try:
         selenium_helper._resolve_element(Wait(), "Type", "dummy", "electronic", row={})
-        
+
         assert ec_calls
         locator = ec_calls[0]
         assert locator[0] == selenium_helper.By.CSS_SELECTOR
