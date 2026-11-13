@@ -422,10 +422,28 @@ def _search_for_company(driver, wait, company):
         )
         driver.execute_script(SCROLL_INTO_VIEW_SCRIPT, search_box)
         time.sleep(0.5)
-        # Clear any previous query, then type the company name.
+        # Clear any previous query BEFORE typing. When several rejections are
+        # processed in one run, the search field retains the prior company
+        # string; appending the next one yields a concatenated query
+        # (e.g. "CompanyACompanyB") that matches 0 rows even though the entry
+        # exists. Clearing robustly (Selenium clear + keyboard select-delete +
+        # a JS value reset with an input event) guarantees an empty field, and
+        # we verify it is empty before entering the new query.
         search_box.click()
+        search_box.clear()
         search_box.send_keys(Keys.CONTROL, "a")
         search_box.send_keys(Keys.DELETE)
+        driver.execute_script(
+            "arguments[0].value = '';"
+            "arguments[0].dispatchEvent(new Event('input', {bubbles: true}));",
+            search_box,
+        )
+        if search_box.get_attribute("value"):
+            # Final fallback: backspace out any residual characters.
+            search_box.send_keys(Keys.END)
+            search_box.send_keys(
+                Keys.BACKSPACE * len(search_box.get_attribute("value"))
+            )
         search_box.send_keys(company)
         time.sleep(2)  # allow the filtered list to re-render
         print(f"   ✓ Searched for company: {company}")
