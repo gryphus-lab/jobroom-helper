@@ -1,3 +1,4 @@
+import builtins
 from types import SimpleNamespace
 
 from selenium.common.exceptions import TimeoutException
@@ -861,6 +862,91 @@ def test_set_status_rejected_returns_true_on_success(monkeypatch):
     result = selenium_helper._set_status_rejected(driver, Entry())
     assert result is True
     assert script_calls
+
+
+def test_set_status_interview_returns_true_on_success(monkeypatch):
+    """_set_status_interview clicks the PENDING label and returns True."""
+    monkeypatch.setattr(selenium_helper.time, "sleep", lambda *_: None)
+
+    script_calls = []
+
+    class Driver:
+        def execute_script(self, script, elem):
+            script_calls.append(script)
+
+    class Entry:
+        def find_element(self, by, selector):
+            return SimpleNamespace()
+
+    result = selenium_helper._set_status_interview(Driver(), Entry())
+    assert result is True
+    assert script_calls
+
+
+def test_set_status_interview_uses_fallback_xpath(monkeypatch):
+    """_set_status_interview falls back to the Vorstellungsgespräch XPath."""
+    monkeypatch.setattr(selenium_helper.time, "sleep", lambda *_: None)
+
+    seen = []
+
+    class Driver:
+        def execute_script(self, script, elem):
+            seen.append(script)
+
+    class Entry:
+        def find_element(self, by, selector):
+            # First call (CSS PENDING label) misses; XPath fallback succeeds.
+            if by == selenium_helper.By.CSS_SELECTOR:
+                raise selenium_helper.NoSuchElementException("no PENDING label")
+            return SimpleNamespace()
+
+    result = selenium_helper._set_status_interview(Driver(), Entry())
+    assert result is True
+    assert seen
+
+
+def test_set_status_interview_returns_false_when_missing(monkeypatch):
+    """_set_status_interview returns False if neither selector matches."""
+    monkeypatch.setattr(selenium_helper.time, "sleep", lambda *_: None)
+
+    class Driver:
+        def execute_script(self, script, elem):
+            pass
+
+    class Entry:
+        def find_element(self, by, selector):
+            raise selenium_helper.NoSuchElementException("missing")
+
+    assert selenium_helper._set_status_interview(Driver(), Entry()) is False
+
+
+def test_process_interview_entry_updates_and_marks_tracked(monkeypatch):
+    """_process_interview_entry sets the status and marks the row processed."""
+    monkeypatch.setattr(selenium_helper.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(builtins, "input", lambda *a, **k: "")
+
+    monkeypatch.setattr(selenium_helper, "_search_for_company", lambda *a, **k: True)
+    entry = SimpleNamespace()
+    monkeypatch.setattr(selenium_helper, "_find_existing_entry", lambda *a, **k: entry)
+    monkeypatch.setattr(selenium_helper, "_set_status_interview", lambda *a, **k: True)
+
+    tracked = []
+
+    class Store:
+        def update_row(self, page_id, properties):
+            tracked.append((page_id, properties))
+            return True
+
+    class Driver:
+        def execute_script(self, *a, **k):
+            pass
+
+    row = {"id": 42, "Company": "Acme", "Role": "Architect"}
+    selenium_helper._process_interview_entry(Driver(), None, Store(), row, 0, 1)
+
+    # The tracker row was marked processed (Tracked=True).
+    assert tracked and tracked[0][0] == 42
+    assert tracked[0][1]["Tracked"]["checkbox"] is True
 
 
 def test_matches_role_empty_role_always_matches():

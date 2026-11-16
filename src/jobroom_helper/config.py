@@ -53,6 +53,14 @@ REJECTION_SELECTORS = {
     "absagegrund_input": "textarea[id*='rejection-reason']",
 }
 
+# Selector for updating an existing entry's status to an interview
+# ("Vorstellungsgespräch"). On the Job-Room work-efforts form this maps to the
+# PENDING status radio (same label pattern as the Absage/REJECTED radio). Unlike
+# a rejection, an interview has no reason/Absagegrund text field to fill.
+INTERVIEW_SELECTORS = {
+    "status_radio_interview": "label[for*='radio-button-'][for$='PENDING']",
+}
+
 # Search box on the work-efforts page used to locate an existing entry by
 # company name, independent of the current control period. The id contains
 # literal dots, so they must be escaped in a CSS selector.

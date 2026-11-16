@@ -547,6 +547,106 @@ def update_rejected_records(driver, wait, df, store):
         _process_rejected_entry(driver, wait, store, row, index, len(df))
 
 
+def _find_interview_label(entry):
+    try:
+        return entry.find_element(By.CSS_SELECTOR, "label[for$='-PENDING']")
+    except NoSuchElementException:
+        return entry.find_element(
+            By.XPATH, ".//label[contains(text(), 'Vorstellungsgespräch')]"
+        )
+
+
+def _set_status_interview(driver, entry):
+    """Click the 'Vorstellungsgespräch' (PENDING) radio within a specific entry.
+
+    The radio button has an ID pattern: alv-radio-button-{N}-PENDING and the
+    label has for="alv-radio-button-{N}-PENDING". Unlike a rejection, an
+    interview status has no reason/Absagegrund field to fill afterwards.
+
+    Args:
+        driver: Selenium WebDriver instance
+        entry: The parent alv-work-effort WebElement
+    """
+    try:
+        interview_label = _find_interview_label(entry)
+        driver.execute_script(SCROLL_INTO_VIEW_SCRIPT, interview_label)
+        time.sleep(0.5)
+        driver.execute_script(EXECUTE_SCRIPT_CLICK, interview_label)
+        print("   ✓ Set status to Vorstellungsgespräch")
+        return True
+    except (NoSuchElementException, WebDriverException) as exc:
+        print(f"   ❌ Could not find Vorstellungsgespräch radio button: {exc}")
+        traceback.print_exc()
+        return False
+
+
+def _print_interview_header(index, total, company, role):
+    print(f"\n{'=' * 60}")
+    print(f"Updating interview {index + 1}/{total}: {company} - {role}")
+    print("   Status → Vorstellungsgespräch")
+
+
+def _update_interview_entry(driver, store, row, company, entry):
+    """Set an entry to 'Vorstellungsgespräch' and mark the tracker row processed."""
+    driver.execute_script(SCROLL_INTO_VIEW_SCRIPT, entry)
+    time.sleep(1)
+
+    if not _set_status_interview(driver, entry):
+        return
+
+    input(f"\n   Review entry for {company}. Press Enter to confirm and continue...")
+
+    print(f"   ✅ Updated {company} to Vorstellungsgespräch")
+    _update_notion_tracked(store, row["id"])
+
+
+def _process_interview_entry(driver, wait, store, row, index, total):
+    """Find and update one interview-stage application represented by a row."""
+    company = str(row.get("Company", ""))
+    role = str(row.get("Role", ""))
+
+    _print_interview_header(index, total, company, role)
+
+    try:
+        _search_for_company(driver, wait, company)
+        entry = _find_existing_entry(driver, company, role)
+        if entry is None:
+            _report_missing_entry(driver, index, company)
+            return
+
+        _update_interview_entry(driver, store, row, company, entry)
+    except (NoSuchElementException, TimeoutException, WebDriverException) as exc:
+        print(f"   ❌ Error updating {company}: {exc}")
+        driver.save_screenshot(f"results/jobroom_interview_error_{index}.png")
+        traceback.print_exc()
+
+
+def update_interview_records(driver, wait, df, store):
+    """Update existing entries that have progressed to an interview.
+
+    Finds entries on the work-efforts page that are still marked 'Noch offen'
+    and switches them to the 'Vorstellungsgespräch' (PENDING) status. Each
+    record is located by typing its company name into the work-efforts search
+    box, so entries are found regardless of the current control period, exactly
+    like the rejection flow. No Absagegrund is involved.
+
+    Only processes records where:
+    - Status == 'Vorstellungsgespräch'
+    - Tracked == False (not yet processed)
+
+    Args:
+        driver: Selenium WebDriver instance
+        wait: WebDriverWait instance
+        df: Dataframe with interview-stage records to update
+        store: ApplicationStore instance
+    """
+    driver.get(get_website_url() + "work-efforts")
+    time.sleep(3)
+
+    for index, row in df.iterrows():
+        _process_interview_entry(driver, wait, store, row, index, len(df))
+
+
 def _entry_text(entry):
     return entry.text.lower()
 

@@ -180,6 +180,46 @@ def test_rejected_filter_has_no_date_window():
     assert tracked_clause["checkbox"]["equals"] is False
 
 
+def test_interview_filter_selects_dirty_vorstellungsgespraech():
+    """The `update` flow syncs dirty interview rows regardless of control period.
+
+    An interview progression, like a rejection, can land in a different control
+    period than the application. The interview filter selects purely by
+    Status='Vorstellungsgespräch' AND Tracked dirty, with no date window.
+    """
+    interview_filter = main_mod.get_interview_filter()
+
+    clauses = interview_filter["and"]
+    assert len(clauses) == 2
+    assert all(c.get("property") != main_mod.APPLIED_DATE for c in clauses)
+    assert not any("date" in c for c in clauses)
+    assert {c["property"] for c in clauses} == {"Tracked", "Status"}
+    status_clause = next(c for c in clauses if c["property"] == "Status")
+    assert status_clause["status"]["equals"] == "Vorstellungsgespräch"
+    tracked_clause = next(c for c in clauses if c["property"] == "Tracked")
+    assert tracked_clause["checkbox"]["equals"] is False
+
+
+def test_month_filter_excludes_interview_rows(monkeypatch):
+    """The `new` flow must not re-log an Applied row already in interview.
+
+    A Vorstellungsgespräch row stays Stage='Applied' and dirty, so without an
+    explicit guard the `new` filter would pick it up and log it a second time
+    as a brand-new work effort. The month filter therefore excludes rows whose
+    Status is 'Vorstellungsgespräch' (handled by the interview update flow).
+    """
+    monkeypatch.setattr(
+        main_mod, "_get_open_period", lambda: ("2024-01-01", "2024-02-05")
+    )
+
+    month_filter = main_mod.get_month_filter()
+
+    status_clause = next(
+        c for c in month_filter["and"] if c.get("property") == "Status"
+    )
+    assert status_clause["status"]["does_not_equal"] == "Vorstellungsgespräch"
+
+
 def test_create_arg_parser_uses_expected_defaults():
     """Test that create argument parser defaults are correct."""
     args = main_mod._create_arg_parser().parse_args(["https://example.com/job"])
@@ -1351,6 +1391,12 @@ def test_run_new_entries_handles_empty_and_error(monkeypatch):
 def test_run_update_rejections_handles_empty_and_success(monkeypatch):
     notion = FakeNotion(pd.DataFrame())
     monkeypatch.setattr(main_mod, "get_rejected_filter", lambda: {"filter": "rejected"})
+    monkeypatch.setattr(
+        main_mod, "get_interview_filter", lambda: {"filter": "interview"}
+    )
+    # The combined update run also syncs interviews; stub that sub-run so this
+    # test isolates the rejection path.
+    monkeypatch.setattr(main_mod, "_run_update_interviews", lambda store: None)
     monkeypatch.setattr(builtins, "input", lambda *args, **kwargs: "")
 
     main_mod._run_update_rejections(notion)
@@ -1393,6 +1439,58 @@ def test_run_update_rejections_handles_empty_and_success(monkeypatch):
 
     main_mod._run_update_rejections(notion)
     assert driver.quit_called
+
+
+def test_run_update_interviews_handles_empty_and_success(monkeypatch):
+    """The interview update run skips when empty and drives the browser else."""
+    notion = FakeNotion(pd.DataFrame())
+    monkeypatch.setattr(
+        main_mod, "get_interview_filter", lambda: {"filter": "interview"}
+    )
+    monkeypatch.setattr(builtins, "input", lambda *args, **kwargs: "")
+
+    # Empty -> no driver created, returns cleanly.
+    main_mod._run_update_interviews(notion)
+
+    df = pd.DataFrame(
+        [
+            {
+                "id": 1,
+                "Company": "Acme",
+                "Role": "Dev",
+                "Last Update Date": "2024-01-01",
+                "Status": "Vorstellungsgespräch",
+            }
+        ]
+    )
+    notion = FakeNotion(df)
+
+    driver = FakeDriver()
+    monkeypatch.setattr(
+        main_mod, "_create_driver", lambda: (driver, FakeWait(driver, 1))
+    )
+    monkeypatch.setattr(main_mod, "handle_login", lambda driver: None)
+    monkeypatch.setattr(
+        main_mod, "update_interview_records", lambda *args, **kwargs: None
+    )
+
+    main_mod._run_update_interviews(notion)
+    assert driver.quit_called
+
+
+def test_run_update_rejections_runs_both_rejected_and_interviews(monkeypatch):
+    """A single `update` run processes rejections, then interviews."""
+    calls = []
+    monkeypatch.setattr(
+        main_mod, "_run_update_rejected", lambda store: calls.append("rejected")
+    )
+    monkeypatch.setattr(
+        main_mod, "_run_update_interviews", lambda store: calls.append("interview")
+    )
+
+    main_mod._run_update_rejections(FakeNotion(pd.DataFrame()))
+
+    assert calls == ["rejected", "interview"]
 
 
 def test_create_driver_with_chromedriver_manager_none(monkeypatch):

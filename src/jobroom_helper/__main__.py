@@ -46,6 +46,7 @@ from jobroom_helper.utils import ApplicationStore
 from jobroom_helper.utils.selenium_helper import (
     handle_login,
     process_records,
+    update_interview_records,
     update_rejected_records,
 )
 
@@ -156,6 +157,15 @@ def get_month_filter():
             {"property": APPLIED_DATE, "date": {"before": end_date}},
             {"property": "Tracked", "checkbox": {"equals": False}},
             {"property": "Stage", "status": {"equals": "Applied"}},
+            # Exclude rows that are Applied but have already progressed to an
+            # interview: those are a dirty *status change* handled by the
+            # ``update`` workflow (get_interview_filter), not brand-new work
+            # efforts. Without this guard a Vorstellungsgespräch row submitted
+            # in the open period would be logged a second time as a new entry.
+            {
+                "property": "Status",
+                "status": {"does_not_equal": "Vorstellungsgespräch"},
+            },
         ]
     }
 
@@ -175,6 +185,30 @@ def get_rejected_filter():
         "and": [
             {"property": "Tracked", "checkbox": {"equals": False}},
             {"property": "Stage", "status": {"equals": "Rejected"}},
+        ]
+    }
+
+
+def get_interview_filter():
+    """Get filter for dirty records that have progressed to an interview.
+
+    The ``update`` workflow also syncs positive status changes: an application
+    that was submitted as 'Noch offen' and has since reached an interview must
+    be switched to 'Vorstellungsgespräch' on Job-Room. Like a rejection, this
+    can happen in a different control period than the submission, and the entry
+    is located by company search rather than month section. The filter selects
+    rows by Status='Vorstellungsgespräch' AND dirty (Tracked NULL / not 'True'),
+    with no Applied-date window, so every unprocessed interview is picked up.
+
+    These rows remain Stage='Applied' (an interview is not a terminal outcome);
+    they are distinguished from brand-new ``new``-workflow rows by the Status
+    value, so the ``new`` flow (Status left at its submission default) never
+    collides with them.
+    """
+    return {
+        "and": [
+            {"property": "Tracked", "checkbox": {"equals": False}},
+            {"property": "Status", "status": {"equals": "Vorstellungsgespräch"}},
         ]
     }
 
@@ -1175,6 +1209,24 @@ def _process_rejected_records(driver, wait, df, store) -> None:
 
 
 def _run_update_rejections(store):
+    """Sync existing entries whose status changed since submission.
+
+    Covers both status transitions the tracker records against a live Job-Room
+    entry:
+
+    * ``Rejected`` → set the Job-Room status to **Absage** (with Absagegrund).
+    * ``Vorstellungsgespräch`` → set the Job-Room status to
+      **Vorstellungsgespräch** (PENDING), no reason field.
+
+    Both are dirty (Tracked not 'True') and located by company search, so the
+    control period they were submitted in does not matter. A single ``update``
+    run processes rejections first, then interview progressions.
+    """
+    _run_update_rejected(store)
+    _run_update_interviews(store)
+
+
+def _run_update_rejected(store):
     """Update existing entries that have been rejected since submission."""
     rejected_filter = get_rejected_filter()
     df = store.get_database_data(filter=rejected_filter)
@@ -1182,7 +1234,6 @@ def _run_update_rejections(store):
     if df.empty:
         print("\n     ⚠️ No rejected records to update.")
         print("     All entries are either still open or already updated.")
-        print(EXIT_MESSAGE)
         return
 
     df = _filter_rejected_records(df)
@@ -1190,13 +1241,57 @@ def _run_update_rejections(store):
     if df.empty:
         print("\n     ⚠️ Rejected records found but none have Update Details.")
         print("     Please add rejection reasons in the tracker first.")
-        print(EXIT_MESSAGE)
         return
 
     _print_rejected_records(df)
 
     driver, wait = _create_driver()
     _process_rejected_records(driver, wait, df, store)
+
+
+def _print_interview_records(df: pd.DataFrame) -> None:
+    print(f"✅ Found {len(df)} interview record(s) to update on Job-Room")
+    print("\nRecords to update:")
+    for _, row in df.iterrows():
+        company = row.get("Company", "N/A")
+        role = row.get("Role", "N/A")
+        update_date = row.get("Last Update Date", "N/A")
+        print(f"   • {company} - {role} (interview: {update_date})")
+
+
+def _process_interview_records(driver, wait, df, store) -> None:
+    """Run the interview update workflow and always close the browser."""
+    try:
+        print("\n🌐 Opening Job-Room...")
+        handle_login(driver)
+        print("\n🔄 Updating interview entries...")
+        update_interview_records(driver, wait, df, store)
+    except Exception as exc:
+        print(f"❌ Error: {exc}")
+        try:
+            driver.save_screenshot("results/jobroom_interview_main_error.png")
+        except Exception as screenshot_exc:
+            print(f"   ⚠️ Could not save screenshot: {screenshot_exc}")
+        traceback.print_exc()
+    finally:
+        input("\nPress Enter to close browser...")
+        driver.quit()
+
+
+def _run_update_interviews(store):
+    """Update existing entries that have progressed to an interview."""
+    interview_filter = get_interview_filter()
+    df = store.get_database_data(filter=interview_filter)
+
+    if df.empty:
+        print("\n     ⚠️ No interview records to update.")
+        print(EXIT_MESSAGE)
+        return
+
+    _print_interview_records(df)
+
+    driver, wait = _create_driver()
+    _process_interview_records(driver, wait, df, store)
 
 
 if __name__ == "__main__":
