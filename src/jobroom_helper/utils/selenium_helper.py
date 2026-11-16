@@ -15,6 +15,7 @@ from jobroom_helper.config import (
     ENTRY_SELECTOR,
     EXECUTE_SCRIPT_CLICK,
     FIELD_SELECTORS,
+    INTERVIEW_SELECTORS,
     SCROLL_INTO_VIEW_SCRIPT,
     WORK_EFFORTS_SEARCH_SELECTOR,
     get_website_url,
@@ -547,35 +548,58 @@ def update_rejected_records(driver, wait, df, store):
         _process_rejected_entry(driver, wait, store, row, index, len(df))
 
 
-def _find_interview_label(entry):
+def _find_interview_checkbox(entry):
+    """Locate the standalone 'Vorstellungsgespräch' checkbox within an entry.
+
+    In the Job-Room "Ergebnis der Bewerbung" group this is a CHECKBOX that is
+    separate from the Noch-offen/Anstellung/Absage status radios. It is found by
+    its checkbox id (…interview…), or, as a fallback, via the checkbox tied to
+    the visible 'Vorstellungsgespräch' label.
+    """
     try:
-        return entry.find_element(By.CSS_SELECTOR, "label[for$='-PENDING']")
-    except NoSuchElementException:
         return entry.find_element(
+            By.CSS_SELECTOR, INTERVIEW_SELECTORS["interview_checkbox"]
+        )
+    except NoSuchElementException:
+        # Fallback: resolve the checkbox from its 'Vorstellungsgespräch' label.
+        label = entry.find_element(
             By.XPATH, ".//label[contains(text(), 'Vorstellungsgespräch')]"
+        )
+        for_id = label.get_attribute("for")
+        if for_id:
+            return entry.find_element(By.ID, for_id)
+        # Last resort: a checkbox sibling within the label's row.
+        return label.find_element(
+            By.XPATH, ".//input[@type='checkbox'] | ../input[@type='checkbox']"
         )
 
 
-def _set_status_interview(driver, entry):
-    """Click the 'Vorstellungsgespräch' (PENDING) radio within a specific entry.
+def _check_interview_checkbox(driver, entry):
+    """Tick the 'Vorstellungsgespräch' checkbox within a specific entry.
 
-    The radio button has an ID pattern: alv-radio-button-{N}-PENDING and the
-    label has for="alv-radio-button-{N}-PENDING". Unlike a rejection, an
-    interview status has no reason/Absagegrund field to fill afterwards.
+    IMPORTANT: Vorstellungsgespräch is a standalone checkbox, NOT a status
+    radio. It is ticked ALONGSIDE the status radio, which stays at "Noch offen"
+    (an interview is not a terminal outcome, so the application remains open).
+    This function therefore only toggles the checkbox and never touches the
+    Noch-offen/Anstellung/Absage radios. It is idempotent: if the checkbox is
+    already ticked, it is left as-is.
 
     Args:
         driver: Selenium WebDriver instance
         entry: The parent alv-work-effort WebElement
     """
     try:
-        interview_label = _find_interview_label(entry)
-        driver.execute_script(SCROLL_INTO_VIEW_SCRIPT, interview_label)
+        checkbox = _find_interview_checkbox(entry)
+        driver.execute_script(SCROLL_INTO_VIEW_SCRIPT, checkbox)
         time.sleep(0.5)
-        driver.execute_script(EXECUTE_SCRIPT_CLICK, interview_label)
-        print("   ✓ Set status to Vorstellungsgespräch")
+        if checkbox.is_selected():
+            print("   ✓ Vorstellungsgespräch already checked")
+            return True
+        driver.execute_script(EXECUTE_SCRIPT_CLICK, checkbox)
+        print("   ✓ Checked Vorstellungsgespräch (status radio left at 'Noch offen')")
         return True
     except (NoSuchElementException, WebDriverException) as exc:
-        print(f"   ❌ Could not find Vorstellungsgespräch radio button: {exc}")
+        print(f"   ❌ Could not find Vorstellungsgespräch checkbox: {exc}")
         traceback.print_exc()
         return False
 
@@ -591,12 +615,12 @@ def _update_interview_entry(driver, store, row, company, entry):
     driver.execute_script(SCROLL_INTO_VIEW_SCRIPT, entry)
     time.sleep(1)
 
-    if not _set_status_interview(driver, entry):
+    if not _check_interview_checkbox(driver, entry):
         return
 
     input(f"\n   Review entry for {company}. Press Enter to confirm and continue...")
 
-    print(f"   ✅ Updated {company} to Vorstellungsgespräch")
+    print(f"   ✅ Marked {company} as Vorstellungsgespräch")
     _update_notion_tracked(store, row["id"])
 
 
