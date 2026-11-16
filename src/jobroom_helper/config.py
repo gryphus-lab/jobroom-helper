@@ -53,6 +53,18 @@ REJECTION_SELECTORS = {
     "absagegrund_input": "textarea[id*='rejection-reason']",
 }
 
+# Selector for marking an existing entry as "Vorstellungsgespräch".
+#
+# IMPORTANT: In the Job-Room "Ergebnis der Bewerbung" group, Vorstellungsgespräch
+# is a standalone CHECKBOX, NOT one of the status radio buttons. It is ticked
+# ALONGSIDE the status radio, which stays at "Noch offen" (the application is
+# still open — an interview is not a terminal outcome). So this flow must check
+# the Vorstellungsgespräch checkbox and must NOT touch the status radio.
+# An interview also has no reason/Absagegrund field.
+INTERVIEW_SELECTORS = {
+    "interview_checkbox": "input[type='checkbox'][id*='interview']",
+}
+
 # Search box on the work-efforts page used to locate an existing entry by
 # company name, independent of the current control period. The id contains
 # literal dots, so they must be escaped in a CSS selector.

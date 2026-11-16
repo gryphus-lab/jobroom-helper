@@ -31,7 +31,7 @@ run = "uv run -m jobroom_helper new"
 alias = ["n"]
 
 [tasks.update]
-description = "Run the main script for 'update-rejections' entries"
+description = "Sync status changes to Job-Room (rejections + interview progressions)"
 run = "uv run -m jobroom_helper update-rejections"
 alias = ["u"]
 

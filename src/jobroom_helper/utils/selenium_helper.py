@@ -15,6 +15,7 @@ from jobroom_helper.config import (
     ENTRY_SELECTOR,
     EXECUTE_SCRIPT_CLICK,
     FIELD_SELECTORS,
+    INTERVIEW_SELECTORS,
     SCROLL_INTO_VIEW_SCRIPT,
     WORK_EFFORTS_SEARCH_SELECTOR,
     get_website_url,
@@ -545,6 +546,129 @@ def update_rejected_records(driver, wait, df, store):
 
     for index, row in df.iterrows():
         _process_rejected_entry(driver, wait, store, row, index, len(df))
+
+
+def _find_interview_checkbox(entry):
+    """Locate the standalone 'Vorstellungsgespräch' checkbox within an entry.
+
+    In the Job-Room "Ergebnis der Bewerbung" group this is a CHECKBOX that is
+    separate from the Noch-offen/Anstellung/Absage status radios. It is found by
+    its checkbox id (…interview…), or, as a fallback, via the checkbox tied to
+    the visible 'Vorstellungsgespräch' label.
+    """
+    try:
+        return entry.find_element(
+            By.CSS_SELECTOR, INTERVIEW_SELECTORS["interview_checkbox"]
+        )
+    except NoSuchElementException:
+        # Fallback: resolve the checkbox from its 'Vorstellungsgespräch' label.
+        label = entry.find_element(
+            By.XPATH, ".//label[contains(text(), 'Vorstellungsgespräch')]"
+        )
+        for_id = label.get_attribute("for")
+        if for_id:
+            return entry.find_element(By.ID, for_id)
+        # Last resort: a checkbox sibling within the label's row.
+        return label.find_element(
+            By.XPATH, ".//input[@type='checkbox'] | ../input[@type='checkbox']"
+        )
+
+
+def _check_interview_checkbox(driver, entry):
+    """Tick the 'Vorstellungsgespräch' checkbox within a specific entry.
+
+    IMPORTANT: Vorstellungsgespräch is a standalone checkbox, NOT a status
+    radio. It is ticked ALONGSIDE the status radio, which stays at "Noch offen"
+    (an interview is not a terminal outcome, so the application remains open).
+    This function therefore only toggles the checkbox and never touches the
+    Noch-offen/Anstellung/Absage radios. It is idempotent: if the checkbox is
+    already ticked, it is left as-is.
+
+    Args:
+        driver: Selenium WebDriver instance
+        entry: The parent alv-work-effort WebElement
+    """
+    try:
+        checkbox = _find_interview_checkbox(entry)
+        driver.execute_script(SCROLL_INTO_VIEW_SCRIPT, checkbox)
+        time.sleep(0.5)
+        if checkbox.is_selected():
+            print("   ✓ Vorstellungsgespräch already checked")
+            return True
+        driver.execute_script(EXECUTE_SCRIPT_CLICK, checkbox)
+        print("   ✓ Checked Vorstellungsgespräch (status radio left at 'Noch offen')")
+        return True
+    except (NoSuchElementException, WebDriverException) as exc:
+        print(f"   ❌ Could not find Vorstellungsgespräch checkbox: {exc}")
+        traceback.print_exc()
+        return False
+
+
+def _print_interview_header(index, total, company, role):
+    print(f"\n{'=' * 60}")
+    print(f"Updating interview {index + 1}/{total}: {company} - {role}")
+    print("   Status → Vorstellungsgespräch")
+
+
+def _update_interview_entry(driver, store, row, company, entry):
+    """Set an entry to 'Vorstellungsgespräch' and mark the tracker row processed."""
+    driver.execute_script(SCROLL_INTO_VIEW_SCRIPT, entry)
+    time.sleep(1)
+
+    if not _check_interview_checkbox(driver, entry):
+        return
+
+    input(f"\n   Review entry for {company}. Press Enter to confirm and continue...")
+
+    print(f"   ✅ Marked {company} as Vorstellungsgespräch")
+    _update_notion_tracked(store, row["id"])
+
+
+def _process_interview_entry(driver, wait, store, row, index, total):
+    """Find and update one interview-stage application represented by a row."""
+    company = str(row.get("Company", ""))
+    role = str(row.get("Role", ""))
+
+    _print_interview_header(index, total, company, role)
+
+    try:
+        _search_for_company(driver, wait, company)
+        entry = _find_existing_entry(driver, company, role)
+        if entry is None:
+            _report_missing_entry(driver, index, company)
+            return
+
+        _update_interview_entry(driver, store, row, company, entry)
+    except (NoSuchElementException, TimeoutException, WebDriverException) as exc:
+        print(f"   ❌ Error updating {company}: {exc}")
+        driver.save_screenshot(f"results/jobroom_interview_error_{index}.png")
+        traceback.print_exc()
+
+
+def update_interview_records(driver, wait, df, store):
+    """Update existing entries that have progressed to an interview.
+
+    Finds entries on the work-efforts page that are still marked 'Noch offen'
+    and switches them to the 'Vorstellungsgespräch' (PENDING) status. Each
+    record is located by typing its company name into the work-efforts search
+    box, so entries are found regardless of the current control period, exactly
+    like the rejection flow. No Absagegrund is involved.
+
+    Only processes records where:
+    - Status == 'Vorstellungsgespräch'
+    - Tracked == False (not yet processed)
+
+    Args:
+        driver: Selenium WebDriver instance
+        wait: WebDriverWait instance
+        df: Dataframe with interview-stage records to update
+        store: ApplicationStore instance
+    """
+    driver.get(get_website_url() + "work-efforts")
+    time.sleep(3)
+
+    for index, row in df.iterrows():
+        _process_interview_entry(driver, wait, store, row, index, len(df))
 
 
 def _entry_text(entry):

@@ -1,3 +1,4 @@
+import builtins
 from types import SimpleNamespace
 
 from selenium.common.exceptions import TimeoutException
@@ -861,6 +862,127 @@ def test_set_status_rejected_returns_true_on_success(monkeypatch):
     result = selenium_helper._set_status_rejected(driver, Entry())
     assert result is True
     assert script_calls
+
+
+def test_check_interview_checkbox_ticks_when_unchecked(monkeypatch):
+    """_check_interview_checkbox clicks the checkbox when it is not yet ticked."""
+    monkeypatch.setattr(selenium_helper.time, "sleep", lambda *_: None)
+
+    clicks = []
+
+    class Checkbox:
+        def is_selected(self):
+            return False
+
+    class Driver:
+        def execute_script(self, script, elem):
+            if script == selenium_helper.EXECUTE_SCRIPT_CLICK:
+                clicks.append(elem)
+
+    class Entry:
+        def find_element(self, by, selector):
+            return Checkbox()
+
+    result = selenium_helper._check_interview_checkbox(Driver(), Entry())
+    assert result is True
+    # The checkbox was clicked exactly once (status radio never touched).
+    assert len(clicks) == 1
+
+
+def test_check_interview_checkbox_idempotent_when_already_checked(monkeypatch):
+    """_check_interview_checkbox leaves an already-ticked checkbox untouched."""
+    monkeypatch.setattr(selenium_helper.time, "sleep", lambda *_: None)
+
+    clicks = []
+
+    class Checkbox:
+        def is_selected(self):
+            return True
+
+    class Driver:
+        def execute_script(self, script, elem):
+            if script == selenium_helper.EXECUTE_SCRIPT_CLICK:
+                clicks.append(elem)
+
+    class Entry:
+        def find_element(self, by, selector):
+            return Checkbox()
+
+    result = selenium_helper._check_interview_checkbox(Driver(), Entry())
+    assert result is True
+    # No click fired — the checkbox was already selected.
+    assert clicks == []
+
+
+def test_find_interview_checkbox_falls_back_to_label(monkeypatch):
+    """When the id selector misses, the checkbox is resolved via its label's 'for'."""
+
+    class Checkbox:
+        def is_selected(self):
+            return False
+
+    class Label:
+        def get_attribute(self, name):
+            return "alv-checkbox-3-interview" if name == "for" else None
+
+    class Entry:
+        def find_element(self, by, selector):
+            if by == selenium_helper.By.CSS_SELECTOR:
+                raise selenium_helper.NoSuchElementException("no id match")
+            if by == selenium_helper.By.XPATH:
+                return Label()
+            if by == selenium_helper.By.ID:
+                return Checkbox()
+            raise selenium_helper.NoSuchElementException("unexpected")
+
+    found = selenium_helper._find_interview_checkbox(Entry())
+    assert isinstance(found, Checkbox)
+
+
+def test_check_interview_checkbox_returns_false_when_missing(monkeypatch):
+    """_check_interview_checkbox returns False if the checkbox cannot be found."""
+    monkeypatch.setattr(selenium_helper.time, "sleep", lambda *_: None)
+
+    class Driver:
+        def execute_script(self, script, elem):
+            pass
+
+    class Entry:
+        def find_element(self, by, selector):
+            raise selenium_helper.NoSuchElementException("missing")
+
+    assert selenium_helper._check_interview_checkbox(Driver(), Entry()) is False
+
+
+def test_process_interview_entry_updates_and_marks_tracked(monkeypatch):
+    """_process_interview_entry ticks the checkbox and marks the row processed."""
+    monkeypatch.setattr(selenium_helper.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(builtins, "input", lambda *a, **k: "")
+
+    monkeypatch.setattr(selenium_helper, "_search_for_company", lambda *a, **k: True)
+    entry = SimpleNamespace()
+    monkeypatch.setattr(selenium_helper, "_find_existing_entry", lambda *a, **k: entry)
+    monkeypatch.setattr(
+        selenium_helper, "_check_interview_checkbox", lambda *a, **k: True
+    )
+
+    tracked = []
+
+    class Store:
+        def update_row(self, page_id, properties):
+            tracked.append((page_id, properties))
+            return True
+
+    class Driver:
+        def execute_script(self, *a, **k):
+            pass
+
+    row = {"id": 42, "Company": "Acme", "Role": "Architect"}
+    selenium_helper._process_interview_entry(Driver(), None, Store(), row, 0, 1)
+
+    # The tracker row was marked processed (Tracked=True).
+    assert tracked and tracked[0][0] == 42
+    assert tracked[0][1]["Tracked"]["checkbox"] is True
 
 
 def test_matches_role_empty_role_always_matches():
