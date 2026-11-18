@@ -188,6 +188,60 @@ def test_get_database_data_filters_stage_and_company(store):
     assert len(by_company) == 2
 
 
+def test_status_does_not_equal_is_null_safe(store):
+    """A ``does_not_equal`` status filter keeps NULL-status and other rows,
+    excluding only rows whose Status matches the excluded value."""
+    # NULL Status (default) -> must be kept.
+    store.create_page(properties=_base_properties(URL="https://example.com/open"))
+    # Explicit other Status -> must be kept.
+    offen = store.create_page(properties=_base_properties(URL="https://example.com/o"))
+    store.update_row(offen, {"Status": "Offen"})
+    # Excluded Status -> must be dropped.
+    vg = store.create_page(properties=_base_properties(URL="https://example.com/vg"))
+    store.update_row(vg, {"Status": "Vorstellungsgespräch"})
+
+    df = store.get_database_data(
+        filter={
+            "property": "Status",
+            "status": {"does_not_equal": "Vorstellungsgespräch"},
+        }
+    )
+    # A row with no Status is stored as empty string (not SQL NULL) by the
+    # canonical schema; the NULL-safe clause keeps it either way.
+    kept = {s if s else "<empty>" for s in df["Status"]}
+    assert "Vorstellungsgespräch" not in kept
+    assert kept == {"<empty>", "Offen"}
+    assert len(df) == 2
+
+
+def test_month_filter_shape_selects_new_applied_row(store):
+    """Regression: the full get_month_filter() dict (which includes a
+    Status does_not_equal Vorstellungsgespräch guard) must still select a
+    brand-new Applied/NULL-status row. Previously the unsupported
+    does_not_equal branch produced ``Status = NULL`` and matched nothing."""
+    store.create_page(
+        properties=_base_properties(
+            URL="https://example.com/new", **{"Applied date": "2026-11-18"}
+        )
+    )
+
+    month_filter = {
+        "and": [
+            {"property": "Applied date", "date": {"on_or_after": "2026-11-01"}},
+            {"property": "Applied date", "date": {"before": "2026-12-07"}},
+            {"property": "Tracked", "checkbox": {"equals": False}},
+            {"property": "Stage", "status": {"equals": "Applied"}},
+            {
+                "property": "Status",
+                "status": {"does_not_equal": "Vorstellungsgespräch"},
+            },
+        ]
+    }
+    df = store.get_database_data(filter=month_filter)
+    assert len(df) == 1
+    assert df.loc[0, "URL"] == "https://example.com/new"
+
+
 def test_update_row_unwraps_checkbox_and_status(store):
     """Row updates unwrap checkbox and status compatibility payloads."""
     row_id = store.create_page(properties=_base_properties())
