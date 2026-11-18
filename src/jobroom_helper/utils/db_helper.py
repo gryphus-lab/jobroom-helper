@@ -208,7 +208,15 @@ class ApplicationStore:
                 return f"{col} = ?", ["True"]
             return f"({col} IS NULL OR {col} != ?)", ["True"]
         if "status" in condition:
-            return f"{col} = ?", [condition["status"].get("equals")]
+            status_filter = condition["status"]
+            if "does_not_equal" in status_filter:
+                # NULL-safe inequality: a row whose Status is NULL is NOT equal
+                # to the excluded value, so it must still pass the filter.
+                return (
+                    f"({col} IS NULL OR {col} != ?)",
+                    [status_filter["does_not_equal"]],
+                )
+            return f"{col} = ?", [status_filter.get("equals")]
         for text_key in ("rich_text", "title"):
             if text_key in condition:
                 return f"{col} = ?", [condition[text_key].get("equals")]
