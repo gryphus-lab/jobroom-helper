@@ -521,6 +521,94 @@ def _install_fake_webdriverwait(monkeypatch, *, found_selectors=None, missing=Fa
     monkeypatch.setattr(selenium_helper.ec, "element_to_be_clickable", fake_clickable)
 
 
+def test_click_when_ready_primary_succeeds(monkeypatch):
+    clicked = []
+    monkeypatch.setattr(selenium_helper.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(
+        selenium_helper.ec,
+        "element_to_be_clickable",
+        lambda loc: type("C", (), {"_locator": loc})(),
+    )
+
+    class FakeWait:
+        def __init__(self, driver, timeout):
+            self.timeout = timeout
+
+        def until(self, condition):
+            if condition._locator[1] == "primary.css":
+                return SimpleNamespace(click=lambda: clicked.append("primary"))
+            raise selenium_helper.TimeoutException("nope")
+
+    monkeypatch.setattr(selenium_helper, "WebDriverWait", FakeWait)
+
+    result = selenium_helper._click_when_ready(
+        driver=object(),
+        primary=(selenium_helper.By.CSS_SELECTOR, "primary.css"),
+        fallback=(selenium_helper.By.XPATH, "//fallback"),
+        label="Login button",
+    )
+    assert result is True
+    assert clicked == ["primary"]
+
+
+def test_click_when_ready_falls_back_to_secondary(monkeypatch):
+    clicked = []
+    monkeypatch.setattr(selenium_helper.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(
+        selenium_helper.ec,
+        "element_to_be_clickable",
+        lambda loc: type("C", (), {"_locator": loc})(),
+    )
+
+    class FakeWait:
+        def __init__(self, driver, timeout):
+            self.timeout = timeout
+
+        def until(self, condition):
+            # Primary CSS times out; text-based XPath fallback succeeds.
+            if condition._locator[1] == "//fallback":
+                return SimpleNamespace(click=lambda: clicked.append("fallback"))
+            raise selenium_helper.TimeoutException("primary not clickable")
+
+    monkeypatch.setattr(selenium_helper, "WebDriverWait", FakeWait)
+
+    result = selenium_helper._click_when_ready(
+        driver=object(),
+        primary=(selenium_helper.By.CSS_SELECTOR, "primary.css"),
+        fallback=(selenium_helper.By.XPATH, "//fallback"),
+        label="AGOV button",
+    )
+    assert result is True
+    assert clicked == ["fallback"]
+
+
+def test_click_when_ready_both_missing_returns_false(monkeypatch):
+    monkeypatch.setattr(selenium_helper.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(
+        selenium_helper.ec,
+        "element_to_be_clickable",
+        lambda loc: type("C", (), {"_locator": loc})(),
+    )
+
+    class FakeWait:
+        def __init__(self, driver, timeout):
+            pass
+
+        def until(self, condition):
+            raise selenium_helper.TimeoutException("never clickable")
+
+    monkeypatch.setattr(selenium_helper, "WebDriverWait", FakeWait)
+
+    result = selenium_helper._click_when_ready(
+        driver=object(),
+        primary=(selenium_helper.By.CSS_SELECTOR, "primary.css"),
+        fallback=(selenium_helper.By.XPATH, "//fallback"),
+        label="Login button",
+        already_message="already on login page?",
+    )
+    assert result is False
+
+
 def test_handle_login_falls_back_to_fresh_login(monkeypatch):
     monkeypatch.setattr(selenium_helper, "load_session", lambda driver: True)
     monkeypatch.setattr(selenium_helper, "save_session", lambda driver: None)
