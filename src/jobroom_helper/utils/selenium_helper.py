@@ -10,6 +10,7 @@ from selenium.common.exceptions import (
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as ec
+from selenium.webdriver.support.ui import WebDriverWait
 
 from jobroom_helper.config import (
     ENTRY_SELECTOR,
@@ -843,6 +844,46 @@ def _fill_absagegrund(driver, wait, entry, absagegrund):
         return False
 
 
+def _click_when_ready(
+    driver, primary, fallback, label, already_message=None, timeout=20
+):
+    """Wait for a login control to be clickable, then click it.
+
+    Tries the primary locator first and falls back to a resilient text-based
+    locator if the primary never becomes clickable. Both missing is treated as
+    "control not present" (e.g. already past this step) rather than a failure,
+    so the manual-login pause downstream still runs.
+
+    Args:
+        driver: Selenium WebDriver instance
+        primary: (By, selector) tuple tried first
+        fallback: (By, selector) tuple tried if the primary times out
+        label: human-readable control name for log messages
+        already_message: optional note appended when neither locator is found
+        timeout: seconds to wait for the primary locator
+
+    Returns:
+        Boolean indicating whether a control was clicked.
+    """
+    for locator in (primary, fallback):
+        try:
+            # Fallback gets a shorter wait: if the primary already timed out,
+            # the page has rendered and the fallback is present or not.
+            wait_for = timeout if locator is primary else 5
+            element = WebDriverWait(driver, wait_for).until(
+                ec.element_to_be_clickable(locator)
+            )
+            element.click()
+            time.sleep(3)
+            return True
+        except TimeoutException:
+            continue
+
+    note = f" - {already_message}" if already_message else ""
+    print(f"   Could not find {label}{note}")
+    return False
+
+
 def handle_login(driver):
     """Handle session restoration or manual login.
 
@@ -868,22 +909,33 @@ def handle_login(driver):
         driver.get(get_website_url())
         print("\n🔄 Starting fresh manual login (daily policy)...")
 
-        try:
-            driver.find_element(
+        # NOTE: These controls are rendered by Angular AFTER the initial page
+        # load, and the AGOV chooser only appears on the IdP page reached once
+        # the Login click has navigated. A bare find_element fires before the
+        # DOM is ready (a render-timing race, exposed by Chrome's shifting
+        # render timing), so we wait explicitly for each control to be
+        # clickable and fall back to a resilient text-based XPath if the
+        # Bootstrap/Angular class names shift.
+        _click_when_ready(
+            driver,
+            primary=(
                 By.CSS_SELECTOR,
                 ".btn.btn-primary.d-none.d-lg-block.ng-star-inserted",
-            ).click()
-            time.sleep(3)
-        except NoSuchElementException as exc:
-            print(f"   Could not find Login button - already on login page?: {exc}")
+            ),
+            fallback=(By.XPATH, "//button[normalize-space()='Login']"),
+            label="Login button",
+            already_message="already on login page?",
+        )
 
-        try:
-            driver.find_element(
-                By.CSS_SELECTOR, "button[class*='idp-card small xtb-default']"
-            ).click()
-            time.sleep(3)
-        except NoSuchElementException as exc:
-            print(f"   Could not find AGOV button: {exc}")
+        _click_when_ready(
+            driver,
+            primary=(
+                By.CSS_SELECTOR,
+                "button[class*='idp-card small xtb-default']",
+            ),
+            fallback=(By.XPATH, "//button[normalize-space()='AGOV']"),
+            label="AGOV button",
+        )
 
         input("✅ Press Enter AFTER successful AGOV login and QR code scan...")
         save_session(driver)

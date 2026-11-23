@@ -481,22 +481,149 @@ def test_expand_month_section_and_process_rejected_entry(monkeypatch):
     assert called.get("updated") is True
 
 
+def _install_fake_webdriverwait(monkeypatch, *, found_selectors=None, missing=False):
+    """Patch selenium_helper.WebDriverWait with a fake that resolves locators.
+
+    handle_login now clicks via WebDriverWait(...).until(
+    ec.element_to_be_clickable(locator)). The fake records every locator it is
+    asked for on the driver (so tests can assert which controls were sought) and
+    either returns a clickable stub or raises TimeoutException to simulate a
+    control that never renders.
+
+    Args:
+        found_selectors: if given, only these selectors resolve; others time out.
+        missing: if True, every locator times out (no control present).
+    """
+
+    class FakeWait:
+        def __init__(self, driver, timeout):
+            self.driver = driver
+
+        def until(self, condition):
+            locator = getattr(condition, "_locator", None)
+            selector = locator[1] if locator else None
+            if hasattr(self.driver, "sought"):
+                self.driver.sought.append(selector)
+            if missing or (
+                found_selectors is not None and selector not in found_selectors
+            ):
+                raise selenium_helper.TimeoutException("not clickable")
+            return SimpleNamespace(click=lambda: None)
+
+    # ec.element_to_be_clickable returns a callable; stash the locator on it so
+    # the fake wait can inspect which control was requested.
+    def fake_clickable(locator):
+        cond = lambda driver: True  # noqa: E731
+        cond._locator = locator
+        return cond
+
+    monkeypatch.setattr(selenium_helper, "WebDriverWait", FakeWait)
+    monkeypatch.setattr(selenium_helper.ec, "element_to_be_clickable", fake_clickable)
+
+
+def test_click_when_ready_primary_succeeds(monkeypatch):
+    clicked = []
+    monkeypatch.setattr(selenium_helper.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(
+        selenium_helper.ec,
+        "element_to_be_clickable",
+        lambda loc: type("C", (), {"_locator": loc})(),
+    )
+
+    class FakeWait:
+        def __init__(self, driver, timeout):
+            self.timeout = timeout
+
+        def until(self, condition):
+            if condition._locator[1] == "primary.css":
+                return SimpleNamespace(click=lambda: clicked.append("primary"))
+            raise selenium_helper.TimeoutException("nope")
+
+    monkeypatch.setattr(selenium_helper, "WebDriverWait", FakeWait)
+
+    result = selenium_helper._click_when_ready(
+        driver=object(),
+        primary=(selenium_helper.By.CSS_SELECTOR, "primary.css"),
+        fallback=(selenium_helper.By.XPATH, "//fallback"),
+        label="Login button",
+    )
+    assert result is True
+    assert clicked == ["primary"]
+
+
+def test_click_when_ready_falls_back_to_secondary(monkeypatch):
+    clicked = []
+    monkeypatch.setattr(selenium_helper.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(
+        selenium_helper.ec,
+        "element_to_be_clickable",
+        lambda loc: type("C", (), {"_locator": loc})(),
+    )
+
+    class FakeWait:
+        def __init__(self, driver, timeout):
+            self.timeout = timeout
+
+        def until(self, condition):
+            # Primary CSS times out; text-based XPath fallback succeeds.
+            if condition._locator[1] == "//fallback":
+                return SimpleNamespace(click=lambda: clicked.append("fallback"))
+            raise selenium_helper.TimeoutException("primary not clickable")
+
+    monkeypatch.setattr(selenium_helper, "WebDriverWait", FakeWait)
+
+    result = selenium_helper._click_when_ready(
+        driver=object(),
+        primary=(selenium_helper.By.CSS_SELECTOR, "primary.css"),
+        fallback=(selenium_helper.By.XPATH, "//fallback"),
+        label="AGOV button",
+    )
+    assert result is True
+    assert clicked == ["fallback"]
+
+
+def test_click_when_ready_both_missing_returns_false(monkeypatch):
+    monkeypatch.setattr(selenium_helper.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(
+        selenium_helper.ec,
+        "element_to_be_clickable",
+        lambda loc: type("C", (), {"_locator": loc})(),
+    )
+
+    class FakeWait:
+        def __init__(self, driver, timeout):
+            pass
+
+        def until(self, condition):
+            raise selenium_helper.TimeoutException("never clickable")
+
+    monkeypatch.setattr(selenium_helper, "WebDriverWait", FakeWait)
+
+    result = selenium_helper._click_when_ready(
+        driver=object(),
+        primary=(selenium_helper.By.CSS_SELECTOR, "primary.css"),
+        fallback=(selenium_helper.By.XPATH, "//fallback"),
+        label="Login button",
+        already_message="already on login page?",
+    )
+    assert result is False
+
+
 def test_handle_login_falls_back_to_fresh_login(monkeypatch):
     monkeypatch.setattr(selenium_helper, "load_session", lambda driver: True)
     monkeypatch.setattr(selenium_helper, "save_session", lambda driver: None)
     monkeypatch.setattr("builtins.input", lambda *args, **kwargs: "")
     monkeypatch.setattr(selenium_helper.time, "sleep", lambda *_: None)
+    _install_fake_webdriverwait(monkeypatch)
 
     class Driver:
         def __init__(self):
             self.current_url = "https://example.com/login"
             self.visited = []
+            self.sought = []
 
         def get(self, url):
             self.visited.append(url)
-
-        def find_element(self, by, selector):
-            return SimpleNamespace(click=lambda: None)
 
     driver = Driver()
     assert selenium_helper.handle_login(driver) is True
@@ -509,44 +636,43 @@ def test_handle_login_fresh_login_with_buttons(monkeypatch):
     monkeypatch.setattr(selenium_helper, "save_session", lambda driver: None)
     monkeypatch.setattr("builtins.input", lambda *args, **kwargs: "")
     monkeypatch.setattr(selenium_helper.time, "sleep", lambda *_: None)
+    _install_fake_webdriverwait(monkeypatch)
 
     class Driver:
         def __init__(self):
             self.current_url = "https://example.com"
             self.visited = []
-            self.find_calls = []
+            self.sought = []
 
         def get(self, url):
             self.visited.append(url)
 
-        def find_element(self, by, selector):
-            self.find_calls.append(selector)
-            return SimpleNamespace(click=lambda: None)
-
     driver = Driver()
     result = selenium_helper.handle_login(driver)
     assert result is True
-    assert len(driver.find_calls) >= 1
+    # The Login control should be waited on before the manual-login pause.
+    assert any("btn-primary" in (s or "") for s in driver.sought)
 
 
 def test_handle_login_missing_buttons(monkeypatch):
-    """Test handle_login when buttons are not found."""
+    """Test handle_login when buttons never render (every wait times out)."""
     monkeypatch.setattr(selenium_helper, "load_session", lambda driver: False)
     monkeypatch.setattr(selenium_helper, "save_session", lambda driver: None)
     monkeypatch.setattr("builtins.input", lambda *args, **kwargs: "")
     monkeypatch.setattr(selenium_helper.time, "sleep", lambda *_: None)
+    _install_fake_webdriverwait(monkeypatch, missing=True)
 
     class Driver:
         def __init__(self):
             self.current_url = "https://example.com"
+            self.sought = []
 
         def get(self, url):
             pass
 
-        def find_element(self, by, selector):
-            raise selenium_helper.NoSuchElementException("not found")
-
     driver = Driver()
+    # Even when no control is found, login must not crash and still returns True
+    # so the manual-login pause can run.
     result = selenium_helper.handle_login(driver)
     assert result is True
 
